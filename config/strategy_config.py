@@ -136,6 +136,34 @@ class MACrossStrategyParams:
             "slow_period": [20, 25, 30, 35, 40, 45, 50, 60]
         }
 
+class TripleMAStrategyParams:
+    """三重均线交叉策略参数 - 2025研究改进版"""
+    
+    @staticmethod
+    def get_base_params() -> StrategyParams:
+        return StrategyParams(
+            name="TRIPLE_MA",
+            description="三重均线策略：快线>中线>慢线时买入，快线跌破中线时卖出，双重确认减少假信号",
+            params={
+                "fast_period": 5,      # 快线周期
+                "mid_period": 20,    # 中线周期
+                "slow_period": 70,   # 慢线周期
+                "volatility_filter": False,  # 是否启用波动率过滤
+                "atr_threshold": 0.02,       # ATR阈值
+            }
+        )
+    
+    @staticmethod
+    def get_param_grid() -> Dict[str, List]:
+        """参数搜索范围"""
+        return {
+            "fast_period": [3, 5, 8, 10, 13],
+            "mid_period": [15, 18, 20, 22, 25, 30],
+            "slow_period": [50, 60, 70, 80, 90, 100],
+            "volatility_filter": [False, True],
+            "atr_threshold": [0.0, 0.01, 0.02, 0.03]
+        }
+
 # ========== 策略工厂配置 ==========
 
 class StrategyFactoryConfig:
@@ -150,6 +178,7 @@ class StrategyFactoryConfig:
             "RSI": RSIStrategyParams.get_base_params(),
             "BOLL": BollingerStrategyParams.get_base_params(),
             "MA_CROSS": MACrossStrategyParams.get_base_params(),
+            "TRIPLE_MA": TripleMAStrategyParams.get_base_params(),
         }
     
     @staticmethod
@@ -161,6 +190,7 @@ class StrategyFactoryConfig:
             "RSI": RSIStrategyParams.get_param_grid(),
             "BOLL": BollingerStrategyParams.get_param_grid(),
             "MA_CROSS": MACrossStrategyParams.get_param_grid(),
+            "TRIPLE_MA": TripleMAStrategyParams.get_param_grid(),
         }
     
     @staticmethod
@@ -172,6 +202,7 @@ class StrategyFactoryConfig:
             "RSI": "RSI策略：RSI低于超卖线时买入，高于超买线时卖出",
             "BOLL": "布林带策略：价格触及下轨时买入，触及上轨时卖出",
             "MA_CROSS": "双均线交叉策略：短期均线上穿长期均线时买入，下穿时卖出",
+            "TRIPLE_MA": "三重均线策略：快线>中线>慢线时买入，双重确认减少假信号",
         }
 
 # ========== 导出配置 ==========
