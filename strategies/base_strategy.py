@@ -307,10 +307,47 @@ class BaseStrategy(bt.Strategy):
 class StrategyFactory:
     """策略工厂"""
     
+    STRATEGY_MAP = {
+        'MA': 'strategies.ma_strategy.MAStrategy',
+        'MACD': 'strategies.macd_strategy.MACDStrategy', 
+        'RSI': 'strategies.rsi_strategy.RSIStrategy',
+        'BOLL': 'strategies.bollinger_strategy.BollingerStrategy',
+        'MA_CROSS': 'strategies.ma_cross_strategy.MACrossStrategy',
+    }
+    
+    @staticmethod
+    def get_strategy_class(strategy_type: str):
+        """
+        获取策略类（用于backtrader addstrategy）
+        
+        Args:
+            strategy_type: 策略类型
+            
+        Returns:
+            策略类
+        """
+        if strategy_type == 'MA':
+            from strategies.ma_strategy import MAStrategy
+            return MAStrategy
+        elif strategy_type == 'MACD':
+            from strategies.macd_strategy import MACDStrategy
+            return MACDStrategy
+        elif strategy_type == 'RSI':
+            from strategies.rsi_strategy import RSIStrategy
+            return RSIStrategy
+        elif strategy_type == 'BOLL':
+            from strategies.bollinger_strategy import BollingerStrategy
+            return BollingerStrategy
+        elif strategy_type == 'MA_CROSS':
+            from strategies.ma_cross_strategy import MACrossStrategy
+            return MACrossStrategy
+        else:
+            raise ValueError(f"未知的策略类型: {strategy_type}")
+    
     @staticmethod
     def create_strategy(strategy_type: str, params: Dict[str, Any] = None) -> BaseStrategy:
         """
-        创建策略实例
+        创建策略实例（用于测试）
         
         Args:
             strategy_type: 策略类型
@@ -319,24 +356,8 @@ class StrategyFactory:
         Returns:
             策略实例
         """
-        # 导入策略类
-        if strategy_type == 'MA':
-            from strategies.ma_strategy import MAStrategy
-            return MAStrategy(params)
-        elif strategy_type == 'MACD':
-            from strategies.macd_strategy import MACDStrategy
-            return MACDStrategy(params)
-        elif strategy_type == 'RSI':
-            from strategies.rsi_strategy import RSIStrategy
-            return RSIStrategy(params)
-        elif strategy_type == 'BOLL':
-            from strategies.bollinger_strategy import BollingerStrategy
-            return BollingerStrategy(params)
-        elif strategy_type == 'MA_CROSS':
-            from strategies.ma_cross_strategy import MACrossStrategy
-            return MACrossStrategy(params)
-        else:
-            raise ValueError(f"未知的策略类型: {strategy_type}")
+        strategy_class = StrategyFactory.get_strategy_class(strategy_type)
+        return strategy_class(params)
     
     @staticmethod
     def get_available_strategies() -> List[str]:

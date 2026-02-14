@@ -11,7 +11,7 @@ import os
 from datetime import datetime
 from loguru import logger
 
-from config.settings import TRADING, BACKTEST, SYSTEM
+from config.settings import TRADING, BACKTEST, SYSTEM, BACKTEST_RESULTS_DIR
 from strategies.base_strategy import BaseStrategy, StrategyFactory
 from utils.data_fetcher import DataFetcher
 from utils.data_processor import DataProcessor
@@ -142,9 +142,9 @@ class BacktestEngine:
             # 添加数据
             cerebro.adddata(data)
             
-            # 添加策略
-            strategy_class = StrategyFactory.create_strategy(strategy_type, params)
-            cerebro.addstrategy(strategy_class)
+            # 添加策略 - 使用策略类并传递参数
+            strategy_class = StrategyFactory.get_strategy_class(strategy_type)
+            cerebro.addstrategy(strategy_class, **params)
             
             # 运行回测
             logger.info(f"初始资金: {cerebro.broker.getvalue():.2f}")
