@@ -14,7 +14,7 @@ from strategies.base_strategy import BaseStrategy
 class MAStrategy(BaseStrategy):
     """移动平均线策略"""
     
-    def __init__(self, params: Dict[str, Any] = None):
+    def __init__(self, **kwargs):
         """
         初始化移动平均线策略
         
@@ -33,8 +33,8 @@ class MAStrategy(BaseStrategy):
         }
         
         # 合并参数
-        if params:
-            default_params.update(params)
+        # 合并参数
+        default_params.update(kwargs)
         
         super().__init__(default_params)
         

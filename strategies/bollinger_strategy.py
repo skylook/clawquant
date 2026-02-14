@@ -14,7 +14,7 @@ from strategies.base_strategy import BaseStrategy
 class BollingerStrategy(BaseStrategy):
     """布林带策略"""
     
-    def __init__(self, params: Dict[str, Any] = None):
+    def __init__(self, **kwargs):
         """
         初始化布林带策略
         
@@ -33,8 +33,8 @@ class BollingerStrategy(BaseStrategy):
         }
         
         # 合并参数
-        if params:
-            default_params.update(params)
+        # 合并参数
+        default_params.update(kwargs)
         
         super().__init__(default_params)
         
