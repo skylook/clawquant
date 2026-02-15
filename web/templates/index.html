@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClawQuant — 量化回测平台</title>
+
+  <!-- Tailwind CSS + Flowbite -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { DEFAULT: '#6366f1', light: '#818cf8', dark: '#4f46e5' }
+          }
+        }
+      }
+    }
+  </script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/flowbite/2.3.0/flowbite.min.css" rel="stylesheet" />
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <!-- Plotly.js (K线图) -->
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <!-- Alpine.js -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js"></script>
+
+  <style>
+    [x-cloak] { display: none !important; }
+    .tab-btn { @apply px-4 py-2 text-sm font-medium rounded-t-lg transition-colors; }
+    .tab-btn.active { @apply bg-slate-800 text-indigo-400 border-b-2 border-indigo-400; }
+    .tab-btn:not(.active) { @apply text-slate-400 hover:text-slate-200 hover:bg-slate-800/50; }
+    .card { @apply bg-slate-800 rounded-xl p-5 border border-slate-700; }
+    .metric-label { @apply text-xs text-slate-400 uppercase tracking-wider mb-1; }
+    .metric-value { @apply text-2xl font-bold; }
+    .badge-green { @apply text-emerald-400; }
+    .badge-red   { @apply text-rose-400; }
+    .badge-yellow { @apply text-amber-400; }
+    .input-field { @apply bg-slate-700 border border-slate-600 text-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 w-full; }
+    .btn-primary { @apply bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2 px-6 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed; }
+  </style>
+</head>
+
+<body class="bg-slate-900 text-slate-200 min-h-screen" x-data="app()" x-init="init()">
+
+<!-- ─── 顶部导航 ─── -->
+<nav class="bg-slate-800/80 backdrop-blur border-b border-slate-700 sticky top-0 z-50">
+  <div class="max-w-7xl mx-auto px-4 flex items-center justify-between h-14">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">CQ</div>
+      <span class="font-semibold text-lg">ClawQuant</span>
+      <span class="text-slate-500 text-sm hidden sm:block">量化回测平台</span>
+    </div>
+    <div class="flex gap-1">
+      <template x-for="(tab, idx) in tabs" :key="idx">
+        <button @click="activeTab = idx"
+                :class="activeTab === idx ? 'active' : ''"
+                class="tab-btn">
+          <span x-text="tab"></span>
+        </button>
+      </template>
+    </div>
+  </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 py-6">
+
+<!-- ══════════════════════════════════════════
+     TAB 0: 概览 Dashboard
+══════════════════════════════════════════ -->
+<div x-show="activeTab === 0" x-cloak>
+  <!-- 状态提示 -->
+  <template x-if="!latestResults.length">
+    <div class="text-center py-16 text-slate-500">
+      <div class="text-4xl mb-4">📊</div>
+      <p class="text-lg">暂无回测结果</p>
+      <p class="text-sm mt-2">前往「运行回测」Tab 执行首次回测</p>
+    </div>
+  </template>
+
+  <template x-if="latestResults.length">
+    <div>
+      <!-- 运行信息 -->
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-lg font-semibold">最新回测结果</h2>
+        <span class="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full" x-text="'Run: ' + (latestRunId || '—')"></span>
+      </div>
+
+      <!-- 市场卡片 -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <template x-for="(r, i) in latestResults" :key="i">
+          <div class="card">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-medium text-slate-200" x-text="r.market || r.market_name || '市场'"></h3>
+              <span class="text-xs px-2 py-0.5 rounded-full"
+                    :class="(r.total_return||0) >= 0 ? 'bg-emerald-900/40 text-emerald-400' : 'bg-rose-900/40 text-rose-400'"
+                    x-text="fmt_pct(r.total_return)"></span>
+            </div>
+
+            <!-- 主要指标 3列 -->
+            <div class="grid grid-cols-3 gap-2 mb-4">
+              <div>
+                <div class="metric-label">年化</div>
+                <div class="text-lg font-bold" :class="color(r.annual_return)" x-text="fmt_pct(r.annual_return)"></div>
+              </div>
+              <div>
+                <div class="metric-label">夏普</div>
+                <div class="text-lg font-bold" :class="color(r.sharpe_ratio)" x-text="fmt_num(r.sharpe_ratio, 3)"></div>
+              </div>
+              <div>
+                <div class="metric-label">回撤</div>
+                <div class="text-lg font-bold text-amber-400" x-text="fmt_num(r.max_drawdown, 2) + '%'"></div>
+              </div>
+            </div>
+
+            <!-- 小型胜率环形图 -->
+            <div class="flex items-center gap-4">
+              <canvas :id="'doughnut_' + i" width="60" height="60" class="flex-shrink-0"></canvas>
+              <div class="text-xs text-slate-400 space-y-1">
+                <div>胜率 <span class="text-slate-200 font-medium" x-text="fmt_pct(r.win_rate)"></span></div>
+                <div>交易 <span class="text-slate-200 font-medium" x-text="r.trades + ' 次'"></span></div>
+                <div>期末 <span class="text-slate-200 font-medium" x-text="'¥' + fmt_num(r.final_value, 0)"></span></div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- 图表区：权益曲线 + 柱状对比 -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="card lg:col-span-2">
+          <h3 class="font-medium mb-3 text-slate-300">权益曲线</h3>
+          <div style="height:260px; position:relative;">
+            <canvas id="equityChart"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <h3 class="font-medium mb-3 text-slate-300">收益 / 夏普对比</h3>
+          <div style="height:260px; position:relative;">
+            <canvas id="barChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TAB 1: 运行回测
+══════════════════════════════════════════ -->
+<div x-show="activeTab === 1" x-cloak>
+  <div class="card max-w-3xl mx-auto mb-6">
+    <h2 class="text-lg font-semibold mb-4">运行新回测</h2>
+
+    <!-- 策略选择 -->
+    <div class="mb-4">
+      <label class="block text-sm text-slate-400 mb-1">策略</label>
+      <select x-model="btForm.strategy" class="input-field">
+        <template x-for="s in availableStrategies" :key="s">
+          <option :value="s" x-text="s"></option>
+        </template>
+      </select>
+    </div>
+
+    <!-- 参数（MA_CROSS专用显示，其他通用） -->
+    <template x-if="btForm.strategy === 'MA_CROSS'">
+      <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">快线周期</label>
+          <input type="number" x-model.number="btForm.params.fast_period" class="input-field" min="1" max="50" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">慢线周期</label>
+          <input type="number" x-model.number="btForm.params.slow_period" class="input-field" min="10" max="300" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">止损</label>
+          <input type="number" x-model.number="btForm.params.stop_loss_ratio" class="input-field" step="0.01" min="0.01" max="0.3" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">止盈</label>
+          <input type="number" x-model.number="btForm.params.take_profit_ratio" class="input-field" step="0.01" min="0.05" max="0.5" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">仓位上限</label>
+          <input type="number" x-model.number="btForm.params.max_position_size" class="input-field" step="0.1" min="0.1" max="1" />
+        </div>
+      </div>
+    </template>
+
+    <!-- 市场选择 -->
+    <div class="mb-5">
+      <label class="block text-sm text-slate-400 mb-2">市场</label>
+      <div class="flex flex-wrap gap-4">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" value="a_share" x-model="btForm.markets" class="rounded border-slate-600 text-indigo-500" />
+          <span class="text-sm">A股 000001.SH</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" value="hk_share" x-model="btForm.markets" class="rounded border-slate-600 text-indigo-500" />
+          <span class="text-sm">港股 0700.HK</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" value="us_nvda" x-model="btForm.markets" class="rounded border-slate-600 text-indigo-500" />
+          <span class="text-sm">美股 NVDA</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="flex items-center gap-4">
+      <button @click="runBacktest()" :disabled="btRunning || !btForm.markets.length" class="btn-primary">
+        <span x-show="!btRunning">▶ 运行回测</span>
+        <span x-show="btRunning" class="flex items-center gap-2">
+          <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+          </svg>
+          运行中...
+        </span>
+      </button>
+      <span x-show="btError" class="text-sm text-rose-400" x-text="btError"></span>
+      <span x-show="btSuccess && !btRunning" class="text-sm text-emerald-400">✓ 回测完成，结果已更新</span>
+    </div>
+  </div>
+
+  <!-- 回测结果卡片（运行完后显示） -->
+  <template x-if="btResults.length">
+    <div>
+      <h3 class="font-semibold mb-3">回测结果 <span class="text-slate-500 text-sm font-normal">（点击市场卡片查看 K 线图）</span></h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <template x-for="(r, i) in btResults" :key="i">
+          <div class="card cursor-pointer transition-all"
+               :class="[r.error ? 'border-rose-800' : '', selectedChartMarket === r.market_key ? 'ring-2 ring-indigo-500 border-indigo-500' : 'hover:border-slate-500']"
+               @click="!r.error && loadChart(r.market_key)">
+            <div class="flex items-center justify-between mb-2">
+              <div class="font-medium" x-text="r.market"></div>
+              <span x-show="!r.error" class="text-xs text-slate-500">点击查看K线</span>
+            </div>
+            <template x-if="r.error">
+              <div class="text-sm text-rose-400" x-text="'错误: ' + r.error"></div>
+            </template>
+            <template x-if="!r.error">
+              <div class="grid grid-cols-2 gap-y-2 text-sm">
+                <div class="text-slate-400">总收益</div><div :class="color(r.total_return)" x-text="fmt_pct(r.total_return)"></div>
+                <div class="text-slate-400">年化收益</div><div :class="color(r.annual_return)" x-text="fmt_pct(r.annual_return)"></div>
+                <div class="text-slate-400">夏普比率</div><div :class="color(r.sharpe_ratio)" x-text="fmt_num(r.sharpe_ratio, 3)"></div>
+                <div class="text-slate-400">最大回撤</div><div class="text-amber-400" x-text="fmt_num(r.max_drawdown, 2) + '%'"></div>
+                <div class="text-slate-400">胜率</div><div x-text="fmt_pct(r.win_rate)"></div>
+                <div class="text-slate-400">交易次数</div><div x-text="r.trades + ' 次'"></div>
+                <div class="text-slate-400">期末资产</div><div x-text="'¥' + fmt_num(r.final_value, 2)"></div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- 权益曲线 -->
+      <div class="card mb-4">
+        <h3 class="font-medium mb-3">权益曲线</h3>
+        <div style="height:280px; position:relative;">
+          <canvas id="btEquityChart"></canvas>
+        </div>
+      </div>
+
+      <!-- K 线图区域（懒加载） -->
+      <div class="card" x-show="selectedChartMarket !== null">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-medium">
+            K 线图
+            <span class="text-slate-500 text-sm font-normal ml-2"
+                  x-text="btResults.find(r => r.market_key === selectedChartMarket)?.market || ''"></span>
+          </h3>
+          <div x-show="chartLoading" class="flex items-center gap-2 text-sm text-slate-400">
+            <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+            </svg>
+            加载中...
+          </div>
+        </div>
+        <div x-show="chartError" class="text-sm text-rose-400 py-4" x-text="chartError"></div>
+        <div id="klineDiv" style="height:600px; width:100%;" x-show="!chartLoading && !chartError"></div>
+      </div>
+    </div>
+  </template>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TAB 2: 市场对比
+══════════════════════════════════════════ -->
+<div x-show="activeTab === 2" x-cloak>
+  <template x-if="!latestResults.length">
+    <div class="text-center py-16 text-slate-500">暂无数据，请先运行回测</div>
+  </template>
+
+  <template x-if="latestResults.length">
+    <div>
+      <!-- 对比表格 -->
+      <div class="card mb-6 overflow-x-auto">
+        <h2 class="font-semibold mb-3">市场对比</h2>
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-slate-400 border-b border-slate-700">
+              <th class="text-left pb-2">市场</th>
+              <th class="text-right pb-2">总收益</th>
+              <th class="text-right pb-2">年化</th>
+              <th class="text-right pb-2">夏普</th>
+              <th class="text-right pb-2">回撤</th>
+              <th class="text-right pb-2">胜率</th>
+              <th class="text-right pb-2">交易次数</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="(r, i) in latestResults" :key="i">
+              <tr class="border-b border-slate-700/50 hover:bg-slate-700/30">
+                <td class="py-2 font-medium" x-text="r.market || r.market_name"></td>
+                <td class="py-2 text-right" :class="color(r.total_return)" x-text="fmt_pct(r.total_return)"></td>
+                <td class="py-2 text-right" :class="color(r.annual_return)" x-text="fmt_pct(r.annual_return)"></td>
+                <td class="py-2 text-right" :class="color(r.sharpe_ratio)" x-text="fmt_num(r.sharpe_ratio, 3)"></td>
+                <td class="py-2 text-right text-amber-400" x-text="fmt_num(r.max_drawdown, 2) + '%'"></td>
+                <td class="py-2 text-right" x-text="fmt_pct(r.win_rate)"></td>
+                <td class="py-2 text-right" x-text="r.trades"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 雷达图 + 散点图 -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="card">
+          <h3 class="font-medium mb-3">多维指标雷达图</h3>
+          <div style="height:300px; position:relative;">
+            <canvas id="radarChart"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <h3 class="font-medium mb-3">风险 vs 收益散点图</h3>
+          <div style="height:300px; position:relative;">
+            <canvas id="scatterChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TAB 3: 交易记录
+══════════════════════════════════════════ -->
+<div x-show="activeTab === 3" x-cloak>
+  <template x-if="!latestResults.length">
+    <div class="text-center py-16 text-slate-500">暂无数据，请先运行回测</div>
+  </template>
+
+  <template x-if="latestResults.length">
+    <div>
+      <!-- 市场切换 -->
+      <div class="flex gap-2 mb-5">
+        <template x-for="(r, i) in latestResults" :key="i">
+          <button @click="selectedMarketIdx = i; renderPnlChart()"
+                  :class="selectedMarketIdx === i ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'"
+                  class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                  x-text="r.market || r.market_name"></button>
+        </template>
+      </div>
+
+      <!-- PnL 分布图 -->
+      <div class="card mb-5">
+        <h3 class="font-medium mb-3">交易盈亏分布</h3>
+        <div style="height:200px; position:relative;">
+          <canvas id="pnlChart"></canvas>
+        </div>
+      </div>
+
+      <!-- 交易记录表格 -->
+      <div class="card overflow-x-auto">
+        <h3 class="font-medium mb-3">
+          交易明细
+          <span class="text-slate-500 text-sm ml-2" x-text="'共 ' + currentTrades.length + ' 条'"></span>
+        </h3>
+        <template x-if="!currentTrades.length">
+          <p class="text-slate-500 text-sm py-4">该市场无交易记录（仅从历史CSV读取时无交易日志）</p>
+        </template>
+        <template x-if="currentTrades.length">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-slate-400 border-b border-slate-700">
+                <th class="text-left pb-2">日期</th>
+                <th class="text-left pb-2">动作</th>
+                <th class="text-right pb-2">价格</th>
+                <th class="text-right pb-2">数量</th>
+                <th class="text-left pb-2">原因</th>
+                <th class="text-right pb-2">盈亏</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="(t, i) in currentTrades" :key="i">
+                <tr class="border-b border-slate-700/40 hover:bg-slate-700/20">
+                  <td class="py-1.5 text-slate-300" x-text="t.date"></td>
+                  <td class="py-1.5">
+                    <span :class="t.action === 'BUY' ? 'text-emerald-400 bg-emerald-900/30' : 'text-rose-400 bg-rose-900/30'"
+                          class="px-2 py-0.5 rounded text-xs font-medium" x-text="t.action"></span>
+                  </td>
+                  <td class="py-1.5 text-right" x-text="t.price"></td>
+                  <td class="py-1.5 text-right" x-text="t.size"></td>
+                  <td class="py-1.5 text-slate-400 text-xs" x-text="t.reason"></td>
+                  <td class="py-1.5 text-right" :class="(t.pnl||0) > 0 ? 'text-emerald-400' : (t.pnl||0) < 0 ? 'text-rose-400' : 'text-slate-400'"
+                      x-text="t.pnl ? (t.pnl > 0 ? '+' : '') + t.pnl.toFixed(2) : '—'"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </template>
+      </div>
+    </div>
+  </template>
+</div>
+
+</div><!-- /max-w-7xl -->
+
+<!-- ──────────────────────────────────────────────
+     Alpine.js 应用逻辑
+────────────────────────────────────────────── -->
+<script>
+const CHART_COLORS = [
+  'rgb(99,102,241)',   // indigo
+  'rgb(16,185,129)',   // emerald
+  'rgb(245,158,11)',   // amber
+];
+const CHART_BG = [
+  'rgba(99,102,241,0.15)',
+  'rgba(16,185,129,0.15)',
+  'rgba(245,158,11,0.15)',
+];
+
+// Chart.js 全局默认（暗色）
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.borderColor = '#334155';
+Chart.defaults.font.family = 'ui-sans-serif, system-ui, sans-serif';
+
+// 存储 Chart 实例（用于销毁重建）
+const _charts = {};
+
+function destroyChart(id) {
+  if (_charts[id]) { _charts[id].destroy(); delete _charts[id]; }
+}
+
+function app() {
+  return {
+    tabs: ['概览 Dashboard', '运行回测', '市场对比', '交易记录'],
+    activeTab: 0,
+
+    // 最新结果
+    latestResults: [],
+    latestRunId: null,
+
+    // 运行回测表单
+    btForm: {
+      strategy: 'MA_CROSS',
+      params: { fast_period: 5, slow_period: 60, stop_loss_ratio: 0.05, take_profit_ratio: 0.15, max_position_size: 0.8 },
+      markets: ['a_share', 'hk_share', 'us_nvda'],
+    },
+    availableStrategies: ['MA_CROSS', 'MA', 'MACD', 'RSI', 'BOLL', 'TRIPLE_MA', 'DUAL_THRUST', 'KAMA', 'TURTLE'],
+    btRunning: false,
+    btError: '',
+    btSuccess: false,
+    btResults: [],
+    btRunId: null,
+
+    // K线图
+    selectedChartMarket: null,
+    chartLoading: false,
+    chartError: '',
+
+    // 交易记录 Tab
+    selectedMarketIdx: 0,
+
+    // ── 格式化工具 ──
+    fmt_pct(v) {
+      if (v == null || isNaN(v)) return '—';
+      return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%';
+    },
+    fmt_num(v, decimals = 2) {
+      if (v == null || isNaN(v)) return '—';
+      return Number(v).toFixed(decimals);
+    },
+    color(v) {
+      if (v == null || isNaN(v)) return 'text-slate-400';
+      return v >= 0 ? 'badge-green' : 'badge-red';
+    },
+
+    // ── 初始化 ──
+    async init() {
+      await this.loadLatestResults();
+      this.$watch('activeTab', (tab) => {
+        this.$nextTick(() => {
+          if (tab === 0) this.renderDashboardCharts();
+          if (tab === 2) this.renderCompareCharts();
+          if (tab === 3) this.renderPnlChart();
+        });
+      });
+    },
+
+    // ── 加载最新结果 ──
+    async loadLatestResults() {
+      try {
+        const res = await fetch('/api/results/latest');
+        const data = await res.json();
+        this.latestResults = data.results || [];
+        this.latestRunId = data.run_id || null;
+        this.$nextTick(() => this.renderDashboardCharts());
+      } catch (e) {
+        console.error('加载结果失败', e);
+      }
+    },
+
+    // ── 运行回测 ──
+    async runBacktest() {
+      this.btRunning = true;
+      this.btError = '';
+      this.btSuccess = false;
+      this.btResults = [];
+      this.selectedChartMarket = null;
+      this.chartError = '';
+      try {
+        const res = await fetch('/api/backtest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            strategy: this.btForm.strategy,
+            params: this.btForm.params,
+            markets: this.btForm.markets,
+          })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        this.btResults = data.results || [];
+        this.btRunId = data.run_id;
+        // 同步到 latestResults（用于其他 Tab）
+        this.latestResults = this.btResults;
+        this.latestRunId = data.run_id;
+        this.btSuccess = true;
+        this.$nextTick(() => this.renderBtEquityChart());
+      } catch (e) {
+        this.btError = '回测失败: ' + e.message;
+      } finally {
+        this.btRunning = false;
+      }
+    },
+
+    // ── 加载 K 线图（懒加载） ──
+    async loadChart(marketKey) {
+      if (!this.btRunId) return;
+      this.selectedChartMarket = marketKey;
+      this.chartLoading = true;
+      this.chartError = '';
+      try {
+        const resp = await fetch(`/api/chart/${this.btRunId}/${marketKey}`);
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: 'K线图不可用' }));
+          throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+        const figData = await resp.json();
+        await this.$nextTick();
+        Plotly.react('klineDiv', figData.data, figData.layout, {
+          responsive: true,
+          displayModeBar: true,
+          modeBarButtonsToRemove: ['select2d', 'lasso2d'],
+        });
+      } catch (e) {
+        this.chartError = 'K线图加载失败: ' + e.message;
+      } finally {
+        this.chartLoading = false;
+      }
+    },
+
+    // ── 当前市场的交易记录 ──
+    get currentTrades() {
+      const r = this.latestResults[this.selectedMarketIdx];
+      return r && r.trade_log ? r.trade_log : [];
+    },
+
+    // ══════════════════════════════
+    //  图表渲染
+    // ══════════════════════════════
+
+    renderDashboardCharts() {
+      if (!this.latestResults.length) return;
+      // 小环形图（胜率）
+      this.latestResults.forEach((r, i) => {
+        const id = 'doughnut_' + i;
+        destroyChart(id);
+        const ctx = document.getElementById(id);
+        if (!ctx) return;
+        const wr = r.win_rate || 0;
+        _charts[id] = new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            datasets: [{
+              data: [wr * 100, (1 - wr) * 100],
+              backgroundColor: ['rgb(99,102,241)', '#1e293b'],
+              borderWidth: 0,
+            }]
+          },
+          options: {
+            cutout: '70%',
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            animation: false,
+          }
+        });
+      });
+      this.renderEquityChart('equityChart', this.latestResults);
+      this.renderGroupedBarChart();
+    },
+
+    renderEquityChart(canvasId, results) {
+      destroyChart(canvasId);
+      const ctx = document.getElementById(canvasId);
+      if (!ctx) return;
+
+      // 找最长的 equity_curve 作为 X 轴
+      let allDates = [];
+      results.forEach(r => {
+        if (r.equity_curve && r.equity_curve.length) {
+          const dates = r.equity_curve.map(p => p.date);
+          if (dates.length > allDates.length) allDates = dates;
+        }
+      });
+
+      // 如果没有权益曲线数据，用占位提示
+      if (!allDates.length) {
+        _charts[canvasId] = new Chart(ctx, {
+          type: 'line',
+          data: { labels: [], datasets: [] },
+          options: {
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { display: false },
+              y: { display: false },
+            }
+          }
+        });
+        return;
+      }
+
+      const datasets = results.map((r, i) => {
+        const vals = r.equity_curve && r.equity_curve.length
+          ? r.equity_curve.map(p => p.value)
+          : [];
+        return {
+          label: r.market || r.market_name || `市场${i+1}`,
+          data: vals,
+          borderColor: CHART_COLORS[i % CHART_COLORS.length],
+          backgroundColor: CHART_BG[i % CHART_BG.length],
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.1,
+          fill: false,
+        };
+      });
+
+      _charts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: { labels: allDates, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { position: 'top', labels: { boxWidth: 12, padding: 12 } },
+            tooltip: {
+              callbacks: {
+                label: ctx => `${ctx.dataset.label}: ¥${Number(ctx.parsed.y).toLocaleString('zh-CN', {minimumFractionDigits: 0})}`
+              }
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: '#1e293b' },
+              ticks: {
+                maxTicksLimit: 8,
+                callback: function(val, idx) {
+                  const label = this.getLabelForValue(val);
+                  return label ? label.slice(0, 7) : '';
+                }
+              }
+            },
+            y: {
+              grid: { color: '#1e293b' },
+              ticks: {
+                callback: v => '¥' + Number(v).toLocaleString('zh-CN', {maximumFractionDigits: 0})
+              }
+            }
+          }
+        }
+      });
+    },
+
+    renderGroupedBarChart() {
+      destroyChart('barChart');
+      const ctx = document.getElementById('barChart');
+      if (!ctx) return;
+      const labels = this.latestResults.map(r => r.market || r.market_name || '?');
+      _charts['barChart'] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: '总收益%',
+              data: this.latestResults.map(r => ((r.total_return || 0) * 100).toFixed(2)),
+              backgroundColor: CHART_COLORS.slice(0, labels.length),
+              borderRadius: 4,
+            },
+            {
+              label: '夏普×10',
+              data: this.latestResults.map(r => ((r.sharpe_ratio || 0) * 10).toFixed(2)),
+              backgroundColor: CHART_BG.slice(0, labels.length),
+              borderColor: CHART_COLORS.slice(0, labels.length),
+              borderWidth: 2,
+              borderRadius: 4,
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'top', labels: { boxWidth: 10, padding: 10 } } },
+          scales: {
+            x: { grid: { display: false } },
+            y: { grid: { color: '#1e293b' } }
+          }
+        }
+      });
+    },
+
+    renderBtEquityChart() {
+      this.renderEquityChart('btEquityChart', this.btResults);
+    },
+
+    renderCompareCharts() {
+      if (!this.latestResults.length) return;
+      this.renderRadarChart();
+      this.renderScatterChart();
+    },
+
+    renderRadarChart() {
+      destroyChart('radarChart');
+      const ctx = document.getElementById('radarChart');
+      if (!ctx) return;
+
+      const results = this.latestResults;
+      // 归一化 5 个指标：总收益、夏普、胜率、-(最大回撤)、交易次数
+      const normalize = (arr) => {
+        const min = Math.min(...arr), max = Math.max(...arr);
+        if (max === min) return arr.map(() => 0.5);
+        return arr.map(v => (v - min) / (max - min));
+      };
+
+      const rets    = normalize(results.map(r => r.total_return || 0));
+      const sharpes = normalize(results.map(r => r.sharpe_ratio || 0));
+      const winrates = normalize(results.map(r => r.win_rate || 0));
+      const negdds  = normalize(results.map(r => -(r.max_drawdown || 0)));
+      const trades  = normalize(results.map(r => r.trades || 0));
+
+      const labels = ['总收益', '夏普比率', '胜率', '低回撤', '交易次数'];
+
+      _charts['radarChart'] = new Chart(ctx, {
+        type: 'radar',
+        data: {
+          labels,
+          datasets: results.map((r, i) => ({
+            label: r.market || r.market_name || `市场${i+1}`,
+            data: [rets[i], sharpes[i], winrates[i], negdds[i], trades[i]].map(v => (v * 100).toFixed(1)),
+            borderColor: CHART_COLORS[i % CHART_COLORS.length],
+            backgroundColor: CHART_BG[i % CHART_BG.length],
+            borderWidth: 2,
+            pointRadius: 3,
+          }))
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            r: {
+              min: 0, max: 100,
+              grid: { color: '#334155' },
+              angleLines: { color: '#334155' },
+              ticks: { display: false },
+              pointLabels: { color: '#94a3b8', font: { size: 12 } }
+            }
+          },
+          plugins: { legend: { position: 'top', labels: { boxWidth: 10, padding: 10 } } }
+        }
+      });
+    },
+
+    renderScatterChart() {
+      destroyChart('scatterChart');
+      const ctx = document.getElementById('scatterChart');
+      if (!ctx) return;
+
+      _charts['scatterChart'] = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+          datasets: this.latestResults.map((r, i) => ({
+            label: r.market || r.market_name || `市场${i+1}`,
+            data: [{ x: r.max_drawdown || 0, y: (r.total_return || 0) * 100 }],
+            backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
+            pointRadius: 10,
+            pointHoverRadius: 13,
+          }))
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'top', labels: { boxWidth: 10, padding: 10 } },
+            tooltip: {
+              callbacks: {
+                label: ctx => `${ctx.dataset.label} — 回撤: ${ctx.parsed.x.toFixed(2)}%  收益: ${ctx.parsed.y.toFixed(2)}%`
+              }
+            }
+          },
+          scales: {
+            x: {
+              title: { display: true, text: '最大回撤 %', color: '#64748b' },
+              grid: { color: '#1e293b' }
+            },
+            y: {
+              title: { display: true, text: '总收益 %', color: '#64748b' },
+              grid: { color: '#1e293b' }
+            }
+          }
+        }
+      });
+    },
+
+    renderPnlChart() {
+      destroyChart('pnlChart');
+      const ctx = document.getElementById('pnlChart');
+      if (!ctx) return;
+
+      const trades = this.currentTrades.filter(t => t.pnl != null && t.pnl !== 0);
+      if (!trades.length) return;
+
+      const labels = trades.map((t, i) => `#${i+1} ${t.date}`);
+      const values = trades.map(t => t.pnl);
+
+      _charts['pnlChart'] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: '盈亏',
+            data: values,
+            backgroundColor: values.map(v => v >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)'),
+            borderRadius: 3,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } },
+            y: { grid: { color: '#1e293b' }, ticks: { callback: v => (v >= 0 ? '+' : '') + v.toFixed(0) } }
+          }
+        }
+      });
+    },
+  };
+}
+</script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/flowbite/2.3.0/flowbite.min.js"></script>
+</body>
+</html>

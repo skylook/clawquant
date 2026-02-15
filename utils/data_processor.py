@@ -220,10 +220,11 @@ class DataProcessor:
         if 'close' not in data.columns or 'high' not in data.columns or 'low' not in data.columns:
             return data
         
-        close_prices = data['close'].values
-        high_prices = data['high'].values
-        low_prices = data['low'].values
-        
+        close_prices = data['close'].values.astype(float)
+        high_prices = data['high'].values.astype(float)
+        low_prices = data['low'].values.astype(float)
+        open_prices = data['open'].values.astype(float) if 'open' in data.columns else close_prices
+
         # 使用TA-Lib识别价格模式
         patterns = [
             ('CDL2CROWS', talib.CDL2CROWS),
@@ -297,7 +298,8 @@ class DataProcessor:
             if pattern_name in common_patterns:
                 try:
                     data[pattern_name] = pattern_func(open_prices, high_prices, low_prices, close_prices)
-                except:
+                except Exception as e:
+                    logger.warning(f"价格模式识别失败 {pattern_name}: {e}")
                     data[pattern_name] = 0
         
         return data

@@ -33,7 +33,6 @@ class BollingerStrategy(BaseStrategy):
         }
         
         # 合并参数
-        # 合并参数
         default_params.update(kwargs)
         
         super().__init__(default_params)
@@ -57,8 +56,7 @@ class BollingerStrategy(BaseStrategy):
         self.bb_bot = self.bollinger.bot
         self.bb_mid = self.bollinger.mid
         
-        # 价格位置（相对于布林带）
-        self.price_position = (self.data.close - self.bb_bot) / (self.bb_top - self.bb_bot)
+        # 价格位置（相对于布林带）- 运行时通过 _safe_price_position() 获取以避免除零
         
         # 带宽指标（可选）
         if params['use_band_width']:
@@ -84,7 +82,14 @@ class BollingerStrategy(BaseStrategy):
         # 状态变量
         self.squeeze_detected = False
         self.last_touch = None  # 'top' 或 'bot'
-    
+
+    def _safe_price_position(self) -> float:
+        """计算价格在布林带中的位置，带除零保护"""
+        bb_range = self.bb_top[0] - self.bb_bot[0]
+        if abs(bb_range) < 1e-10:
+            return 0.5  # 布林带挤压时返回中间值
+        return (self.data.close[0] - self.bb_bot[0]) / bb_range
+
     def generate_signals(self) -> Dict[str, Any]:
         """
         生成交易信号
@@ -110,7 +115,7 @@ class BollingerStrategy(BaseStrategy):
         bb_mid = self.bb_mid[0]
         
         # 计算价格位置
-        price_pos = self.price_position[0]
+        price_pos = self._safe_price_position()
         
         # 检测布林带挤压
         self._detect_squeeze()
@@ -239,7 +244,7 @@ class BollingerStrategy(BaseStrategy):
                          bb_bot: float, bb_mid: float) -> Dict[str, Any]:
         """监控持仓"""
         signals = {}
-        price_pos = self.price_position[0]
+        price_pos = self._safe_price_position()
         
         # 检查是否应该继续持有
         if self.last_touch == 'bot':  # 从下轨买入
@@ -261,7 +266,7 @@ class BollingerStrategy(BaseStrategy):
         """趋势向下时的信号"""
         signals = {}
         
-        price_pos = self.price_position[0]
+        price_pos = self._safe_price_position()
         threshold = self.params_dict['band_touch_threshold']
         
         # 趋势向下时，只在极端超卖时考虑买入
@@ -339,7 +344,7 @@ class BollingerStrategy(BaseStrategy):
                 'bb_top': float(self.bb_top[0]) if hasattr(self, 'bb_top') else None,
                 'bb_mid': float(self.bb_mid[0]) if hasattr(self, 'bb_mid') else None,
                 'bb_bot': float(self.bb_bot[0]) if hasattr(self, 'bb_bot') else None,
-                'price_position': float(self.price_position[0]) if hasattr(self, 'price_position') else None,
+                'price_position': float(self._safe_price_position()),
                 'trend': bool(self.trend[0]) if hasattr(self, 'trend') else None,
                 'squeeze_detected': self.squeeze_detected,
                 'last_touch': self.last_touch

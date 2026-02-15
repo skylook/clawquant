@@ -28,9 +28,6 @@ class BaseStrategy(bt.Strategy):
         # 策略参数
         self.params_dict = params or {}
         
-        # 数据引用
-        self.datas = self.datas
-        
         # 交易统计
         self.trade_count = 0
         self.win_count = 0
@@ -54,13 +51,53 @@ class BaseStrategy(bt.Strategy):
         # 初始化策略
         self._init_strategy()
     
+    def _validate_params(self):
+        """验证策略参数合理性（子类可重写以添加特定验证）"""
+        params = self.params_dict
+
+        # 验证风险控制参数
+        stop_loss = params.get('stop_loss_ratio', 0)
+        if stop_loss < 0 or stop_loss > 1:
+            logger.warning(f"stop_loss_ratio={stop_loss} 不在合理范围(0,1)，使用默认值")
+            params['stop_loss_ratio'] = TRADING.STOP_LOSS_RATIO
+
+        take_profit = params.get('take_profit_ratio', 0)
+        if take_profit < 0 or take_profit > 10:
+            logger.warning(f"take_profit_ratio={take_profit} 不在合理范围(0,10)，使用默认值")
+            params['take_profit_ratio'] = TRADING.TAKE_PROFIT_RATIO
+
+        max_pos = params.get('max_position_size', 0)
+        if max_pos <= 0 or max_pos > 1:
+            logger.warning(f"max_position_size={max_pos} 不在合理范围(0,1]，使用默认值")
+            params['max_position_size'] = TRADING.MAX_POSITION_SIZE
+
+        # 验证均线周期参数（通用）
+        for fast_key, slow_key in [('fast_period', 'slow_period'), ('sma_period', 'lma_period'), ('sma_short', 'sma_long')]:
+            if fast_key in params and slow_key in params:
+                if params[fast_key] >= params[slow_key]:
+                    logger.warning(f"{fast_key}={params[fast_key]} >= {slow_key}={params[slow_key]}，快线周期应小于慢线周期")
+
+        # 验证ATR风险比例参数
+        if 'atr_risk_pct' in params:
+            atr_risk_pct = params['atr_risk_pct']
+            if atr_risk_pct < 0.001 or atr_risk_pct > 0.1:
+                logger.warning(f"atr_risk_pct={atr_risk_pct} 不在合理范围[0.001, 0.1]，使用默认值0.01")
+                params['atr_risk_pct'] = 0.01
+
     def _init_strategy(self):
         """初始化策略（子类可以重写）"""
+        # 验证参数
+        self._validate_params()
+
         # 设置风险控制参数
         self.stop_loss_ratio = self.params_dict.get('stop_loss_ratio', TRADING.STOP_LOSS_RATIO)
         self.take_profit_ratio = self.params_dict.get('take_profit_ratio', TRADING.TAKE_PROFIT_RATIO)
         self.max_position_size = self.params_dict.get('max_position_size', TRADING.MAX_POSITION_SIZE)
-        
+
+        # ATR仓位管理参数
+        self.use_atr_sizing = self.params_dict.get('use_atr_sizing', False)
+        self.atr_risk_pct = self.params_dict.get('atr_risk_pct', 0.01)
+
         # 添加基础指标
         self._add_base_indicators()
     
@@ -149,44 +186,77 @@ class BaseStrategy(bt.Strategy):
         # 执行卖出
         self.sell(size=self.position.size)
         
+        # 保存卖出数量（在重置前）
+        sold_size = self.position_size
+
         # 计算盈亏
-        pnl = (price - self.entry_price) * self.position_size
+        pnl = (price - self.entry_price) * sold_size
         self.total_pnl += pnl
-        
+
         # 更新统计
         self.trade_count += 1
         if pnl > 0:
             self.win_count += 1
         else:
             self.loss_count += 1
-        
+
         # 重置持仓状态
         self.position_size = 0
         self.entry_price = 0.0
         self.stop_loss_price = 0.0
         self.take_profit_price = 0.0
-        
+
         # 记录日志
-        self.log_trade('SELL', price, self.position_size, reason, pnl)
+        self.log_trade('SELL', price, sold_size, reason, pnl)
     
-    def _calculate_position_size(self, signal_strength: float) -> float:
-        """计算仓位大小"""
-        # 基于凯利公式的简化版本
+    def _calculate_atr_position_size(self, signal_strength: float) -> float:
+        """
+        ATR-based position sizing (turtle/van tharp style).
+
+        Risk amount = account_value * atr_risk_pct * signal_strength
+        Dollar risk per share = current ATR value
+        Shares = risk_amount / atr_value, rounded down to nearest 100 (A-share lot size)
+
+        Falls back to 2% of price when the ATR indicator is unavailable or zero.
+        """
         account_value = self.broker.getvalue()
-        
+        risk_amount = account_value * self.atr_risk_pct * signal_strength
+
+        # Use ATR indicator if available
+        if hasattr(self, 'atr') and self.atr is not None and len(self.atr) > 0:
+            atr_val = self.atr[0]
+        else:
+            # Fallback: estimate ATR as 2% of price
+            atr_val = self.data.close[0] * 0.02
+
+        if atr_val <= 0:
+            return 100  # minimum position
+
+        position_size = risk_amount / atr_val
+        position_size = int(position_size / 100) * 100  # A股100股单位
+        return max(position_size, 100)
+
+    def _calculate_position_size(self, signal_strength: float) -> float:
+        """计算仓位大小，支持固定比例和ATR两种模式"""
+        if self.use_atr_sizing:
+            return self._calculate_atr_position_size(signal_strength)
+
+        # 基于凯利公式的简化版本（固定比例模式）
+        account_value = self.broker.getvalue()
+
         # 基础仓位（最大仓位 * 信号强度）
         base_size = account_value * self.max_position_size * signal_strength
-        
+
         # 考虑风险调整
         risk_adjusted_size = base_size * (1 - self.stop_loss_ratio)
-        
+
         # 转换为股票数量（假设股价为当前价格）
         price = self.data.close[0]
         position_size = risk_adjusted_size / price
-        
+
         # 取整
         position_size = int(position_size / 100) * 100  # A股以100股为单位
-        
+
         return max(position_size, 100)  # 至少100股
     
     def _set_stop_loss_take_profit(self, entry_price: float):
@@ -309,10 +379,14 @@ class StrategyFactory:
     
     STRATEGY_MAP = {
         'MA': 'strategies.ma_strategy.MAStrategy',
-        'MACD': 'strategies.macd_strategy.MACDStrategy', 
+        'MACD': 'strategies.macd_strategy.MACDStrategy',
         'RSI': 'strategies.rsi_strategy.RSIStrategy',
         'BOLL': 'strategies.bollinger_strategy.BollingerStrategy',
         'MA_CROSS': 'strategies.ma_cross_strategy.MACrossStrategy',
+        'TRIPLE_MA': 'strategies.triple_ma_strategy.TripleMAStrategy',
+        'DUAL_THRUST': 'strategies.dual_thrust_strategy.DualThrustStrategy',
+        'KAMA': 'strategies.kama_strategy.KAMAStrategy',
+        'TURTLE': 'strategies.turtle_strategy.TurtleStrategy',
     }
     
     @staticmethod
@@ -341,6 +415,18 @@ class StrategyFactory:
         elif strategy_type == 'MA_CROSS':
             from strategies.ma_cross_strategy import MACrossStrategy
             return MACrossStrategy
+        elif strategy_type == 'TRIPLE_MA':
+            from strategies.triple_ma_strategy import TripleMAStrategy
+            return TripleMAStrategy
+        elif strategy_type == 'DUAL_THRUST':
+            from strategies.dual_thrust_strategy import DualThrustStrategy
+            return DualThrustStrategy
+        elif strategy_type == 'KAMA':
+            from strategies.kama_strategy import KAMAStrategy
+            return KAMAStrategy
+        elif strategy_type == 'TURTLE':
+            from strategies.turtle_strategy import TurtleStrategy
+            return TurtleStrategy
         else:
             raise ValueError(f"未知的策略类型: {strategy_type}")
     
@@ -362,7 +448,7 @@ class StrategyFactory:
     @staticmethod
     def get_available_strategies() -> List[str]:
         """获取可用的策略类型"""
-        return ['MA', 'MACD', 'RSI', 'BOLL', 'MA_CROSS']
+        return ['MA', 'MACD', 'RSI', 'BOLL', 'MA_CROSS', 'TRIPLE_MA', 'DUAL_THRUST', 'KAMA', 'TURTLE']
     
     @staticmethod
     def get_default_params(strategy_type: str) -> Dict[str, Any]:
@@ -399,6 +485,49 @@ class StrategyFactory:
                 'slow_period': 30,
                 'stop_loss_ratio': 0.05,
                 'take_profit_ratio': 0.10
+            },
+            'TRIPLE_MA': {
+                'fast_period': 5,
+                'mid_period': 20,
+                'slow_period': 70,
+                'stop_loss_ratio': 0.05,
+                'take_profit_ratio': 0.10
+            },
+            'DUAL_THRUST': {
+                'lookback': 5,
+                'k1': 0.5,
+                'k2': 0.5,
+                'use_atr_stop': True,
+                'atr_period': 14,
+                'atr_multiplier': 2.0,
+                'stop_loss_ratio': 0.05,
+                'take_profit_ratio': 0.15,
+                'max_position_size': 0.8,
+            },
+            'TURTLE': {
+                'entry_period': 20,
+                'exit_period': 10,
+                'atr_period': 20,
+                'risk_per_unit': 0.01,
+                'use_pyramiding': False,
+                'max_units': 4,
+                'stop_loss_atr_multiplier': 2.0,
+                'stop_loss_ratio': 0.05,
+                'take_profit_ratio': 0.20,
+                'max_position_size': 0.8,
+            },
+            'KAMA': {
+                'period': 10,
+                'fast': 2,
+                'slow': 30,
+                'use_trend_filter': True,
+                'trend_period': 200,
+                'use_atr_stop': True,
+                'atr_period': 14,
+                'atr_multiplier': 2.0,
+                'stop_loss_ratio': 0.05,
+                'take_profit_ratio': 0.10,
+                'max_position_size': 0.8,
             }
         }
         

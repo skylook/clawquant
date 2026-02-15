@@ -34,7 +34,6 @@ class MACrossStrategy(BaseStrategy):
         }
 
         # 合并参数
-        # 合并参数
         default_params.update(kwargs)
 
         super().__init__(default_params)
@@ -135,7 +134,7 @@ class MACrossStrategy(BaseStrategy):
                 if self.position.size == 0:
                     signals['action'] = 'buy'
                     signals['strength'] = self._calculate_golden_cross_strength(fast_ma, slow_ma)
-                    signals['reason'] = f'均线金叉: {params["fast_period"]}上穿{params["slow_period"]}'
+                    signals['reason'] = f'均线金叉: {self.params_dict["fast_period"]}上穿{self.params_dict["slow_period"]}'
 
             # 死叉卖出信号
             elif self.crossover[-1] == -1:  # 快速均线下穿慢速均线
@@ -145,7 +144,7 @@ class MACrossStrategy(BaseStrategy):
                 if self.position.size > 0:
                     signals['action'] = 'sell'
                     signals['strength'] = 1.0
-                    signals['reason'] = f'均线死叉: {params["fast_period"]}下穿{params["slow_period"]}'
+                    signals['reason'] = f'均线死叉: {self.params_dict["fast_period"]}下穿{self.params_dict["slow_period"]}'
 
             # 持仓监控
             elif self.position.size > 0:

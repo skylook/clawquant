@@ -74,34 +74,127 @@ class BacktestAnalyzer:
         return analysis
     
     def _calculate_risk_metrics(self, performance: Dict[str, Any]) -> Dict[str, Any]:
-        """计算风险指标"""
+        """
+        计算风险指标。
+
+        计算的指标包括：
+
+        * **最大回撤** (max_drawdown): 从高点到低点的最大亏损幅度。
+        * **卡玛比率** (calmar_ratio): 年化收益率除以最大回撤绝对值。
+          反映单位最大风险所获得的年化超额收益，数值越高越好。
+          公式: annual_return / |max_drawdown|
+        * **索提诺比率** (sortino_ratio): 仅惩罚下行波动的风险调整收益率。
+          若 performance 中包含 'downside_deviation' 则直接使用，
+          否则以 sharpe_ratio * 1.2 估算并在结果中标注。
+        * **欧米伽比率** (omega_ratio): 收益分布中正收益期望值与负收益
+          期望绝对值的比率，阈值默认为 0。
+          公式: E[max(R - threshold, 0)] / E[max(threshold - R, 0)]
+          仅在 performance 中包含 'daily_returns' 时计算。
+          数值 > 1 表示正收益期望高于负收益期望。
+        * **波动率** (volatility): 若 performance 中已包含则直接采用。
+        * **风险调整收益率** (risk_adjusted_return): total_return / (1 + |max_drawdown|)。
+        """
         risk_metrics = {}
-        
+
         # 最大回撤
         max_drawdown = performance.get('max_drawdown', 0)
         risk_metrics['max_drawdown'] = max_drawdown
-        
-        # 卡玛比率（年化收益/最大回撤）
+
+        # 卡玛比率（年化收益 / 最大回撤绝对值）
+        # 正确公式: calmar = annual_return / |max_drawdown|
+        # 分母取绝对值以兼容正负两种符号约定（某些引擎以负数报告回撤）。
         annual_return = performance.get('annual_return', 0)
-        if max_drawdown != 0:
-            risk_metrics['calmar_ratio'] = annual_return / abs(max_drawdown)
+        abs_drawdown = abs(max_drawdown)
+        if abs_drawdown != 0:
+            risk_metrics['calmar_ratio'] = annual_return / abs_drawdown
         else:
             risk_metrics['calmar_ratio'] = float('inf') if annual_return > 0 else 0
-        
-        # 索提诺比率（只考虑下行风险）
-        # 这里简化处理，实际需要计算下行偏差
-        sharpe_ratio = performance.get('sharpe_ratio', 0)
-        risk_metrics['sortino_ratio'] = sharpe_ratio * 1.2  # 假设索提诺比夏普高20%
-        
+
+        # 索提诺比率（基于下行偏差）
+        downside_deviation = performance.get('downside_deviation', None)
+        if downside_deviation is not None and downside_deviation > 0:
+            risk_metrics['sortino_ratio'] = annual_return / downside_deviation
+        else:
+            # 无法计算真实 Sortino，使用 Sharpe 估算并标记
+            sharpe_ratio = performance.get('sharpe_ratio', 0)
+            risk_metrics['sortino_ratio'] = (sharpe_ratio or 0) * 1.2
+            risk_metrics['sortino_estimated'] = True
+
+        # 欧米伽比率（Omega Ratio）
+        # 仅在 performance 中包含 'daily_returns' 时计算；否则跳过。
+        daily_returns = performance.get('daily_returns', None)
+        omega = self._calculate_omega_ratio(daily_returns)
+        if omega is not None:
+            risk_metrics['omega_ratio'] = omega
+
         # 波动率
         if 'volatility' in performance:
             risk_metrics['volatility'] = performance['volatility']
-        
+
         # 风险调整收益率
         if 'sharpe_ratio' in performance and 'total_return' in performance:
-            risk_metrics['risk_adjusted_return'] = performance['total_return'] / (1 + abs(max_drawdown))
-        
+            risk_metrics['risk_adjusted_return'] = (
+                performance['total_return'] / (1 + abs_drawdown)
+            )
+
         return risk_metrics
+
+    def _calculate_omega_ratio(
+        self,
+        daily_returns: Any,
+        threshold: float = 0.0,
+    ) -> Optional[float]:
+        """
+        计算欧米伽比率 (Omega Ratio)。
+
+        Omega 衡量收益分布相对于给定阈值的"上行潜力"与"下行风险"之比。
+        值大于 1 表示正超额收益期望超过负超额收益期望。
+
+        公式::
+
+            Omega = E[max(R - threshold, 0)] / E[max(threshold - R, 0)]
+
+        参数
+        ----------
+        daily_returns : list, pd.Series, or np.ndarray
+            每日收益率序列（小数形式，例如 0.01 表示 1%）。
+            若为 ``None`` 或空序列则返回 ``None``。
+        threshold : float, optional
+            基准收益率阈值（默认 0.0，即零收益线）。
+            常用值为无风险日收益率（如 0.02/252）。
+
+        返回
+        -----
+        float or None
+            欧米伽比率，若数据不足或分母为零则返回 ``None``。
+        """
+        if daily_returns is None:
+            return None
+
+        try:
+            if isinstance(daily_returns, pd.Series):
+                returns_arr = daily_returns.dropna().to_numpy(dtype=float)
+            else:
+                returns_arr = np.asarray(daily_returns, dtype=float)
+                # Remove NaN / Inf values
+                returns_arr = returns_arr[np.isfinite(returns_arr)]
+        except (TypeError, ValueError):
+            return None
+
+        if returns_arr.size < 2:
+            return None
+
+        gains = np.maximum(returns_arr - threshold, 0.0)
+        losses = np.maximum(threshold - returns_arr, 0.0)
+
+        expected_gain = gains.mean()
+        expected_loss = losses.mean()
+
+        if expected_loss == 0.0:
+            # All returns exceed the threshold: omega is theoretically infinite.
+            return None
+
+        return float(expected_gain / expected_loss)
     
     def _analyze_trades(self, trade_logs: pd.DataFrame) -> Dict[str, Any]:
         """分析交易记录"""

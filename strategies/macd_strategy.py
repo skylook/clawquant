@@ -33,7 +33,6 @@ class MACDStrategy(BaseStrategy):
         }
         
         # 合并参数
-        # 合并参数
         default_params.update(kwargs)
         
         super().__init__(default_params)
@@ -115,39 +114,48 @@ class MACDStrategy(BaseStrategy):
                 signals['action'] = 'buy'
                 signals['strength'] = self._calculate_cross_strength(macd_val, signal_val)
                 signals['reason'] = f'MACD金叉: {self.params_dict["fast_period"]}/{self.params_dict["slow_period"]}/{self.params_dict["signal_period"]}'
-                
+
                 # 如果同时上穿零轴，增强信号
                 if self.zero_cross[0] == 1:
                     signals['strength'] = min(signals['strength'] * 1.5, 1.0)
                     signals['reason'] += ' + 零轴上穿'
-            
+
             elif self.macd_cross[0] == -1:  # MACD下穿信号线
                 signals['action'] = 'sell'
                 signals['strength'] = 1.0
                 signals['reason'] = f'MACD死叉: {self.params_dict["fast_period"]}/{self.params_dict["slow_period"]}/{self.params_dict["signal_period"]}'
-                
+
                 # 如果同时下穿零轴，增强信号
                 if self.zero_cross[0] == -1:
                     signals['strength'] = 1.0
                     signals['reason'] += ' + 零轴下穿'
-            
-            # 次要信号：柱状图动量
-            elif self.params_dict['use_histogram']:
-                signals.update(self._generate_histogram_signals(hist_val))
-            
-            # 背离信号（可选）
-            elif self.params_dict['use_divergence']:
-                signals.update(self._generate_divergence_signals())
-            
-            # 持仓监控
-            elif self.position.size > 0:
-                signals.update(self._monitor_position(macd_val, signal_val))
-            
-            # 空仓等待
+
             else:
-                signals['action'] = 'hold'
-                signals['strength'] = 0
-                signals['reason'] = '等待MACD信号'
+                # 无交叉信号时，组合检查柱状图和背离信号
+                hist_signals = {}
+                div_signals = {}
+
+                if self.params_dict['use_histogram']:
+                    hist_signals = self._generate_histogram_signals(hist_val)
+
+                if self.params_dict['use_divergence']:
+                    div_signals = self._generate_divergence_signals()
+
+                # 优先使用背离信号（更强），其次柱状图信号
+                if div_signals.get('action') in ('buy', 'sell'):
+                    signals.update(div_signals)
+                    # 如果柱状图信号方向一致，增强强度
+                    if hist_signals.get('action') == div_signals['action']:
+                        signals['strength'] = min(signals['strength'] * 1.2, 1.0)
+                        signals['reason'] += ' + 柱状图确认'
+                elif hist_signals.get('action') in ('buy', 'sell'):
+                    signals.update(hist_signals)
+                elif self.position.size > 0:
+                    signals.update(self._monitor_position(macd_val, signal_val))
+                else:
+                    signals['action'] = 'hold'
+                    signals['strength'] = 0
+                    signals['reason'] = '等待MACD信号'
         
         else:
             # 趋势向下，只考虑卖出或观望

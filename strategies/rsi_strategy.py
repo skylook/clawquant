@@ -34,7 +34,6 @@ class RSIStrategy(BaseStrategy):
         }
         
         # 合并参数
-        # 合并参数
         default_params.update(kwargs)
         
         super().__init__(default_params)

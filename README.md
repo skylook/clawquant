@@ -53,6 +53,9 @@ Develop/clawquant/
 7. **实时数据验证**：支持A股实时数据验证
 
 ## 使用方法
+
+### 命令行回测
+
 ```bash
 # 安装依赖
 pip install -r requirements.txt
@@ -64,7 +67,64 @@ python main.py
 python main.py --mode backtest      # 只运行回测
 python main.py --mode optimize      # 只运行优化
 python main.py --mode full          # 完整流程（默认）
+
+# 三市场批量回测（A股/港股/美股，结果保存到 results/backtest_results/）
+python run_multimarket_backtest.py
 ```
+
+---
+
+## WebUI 可视化平台
+
+### 快速启动
+
+```bash
+# 1. 安装 Web 依赖（首次执行）
+pip install -r requirements.txt
+pip install backtrader-plotly       # K线图依赖
+
+# 2. 启动 Web 服务
+python web/app.py
+
+# 浏览器访问
+open http://localhost:8888
+```
+
+### 功能说明
+
+| Tab | 功能 |
+|-----|------|
+| 概览 Dashboard | 最新回测汇总：市场卡片、权益曲线、收益/夏普对比图 |
+| 运行回测 | 配置策略参数 → 一键运行三市场回测 → **交互式 K 线图** |
+| 市场对比 | 多维雷达图、风险/收益散点图 |
+| 交易记录 | 各市场逐笔交易明细、盈亏分布图 |
+
+### 运行回测 + 查看 K 线图
+
+1. 切换到 **「运行回测」** Tab
+2. 选择策略（默认 `MA_CROSS`）并填写参数
+3. 勾选目标市场（A股 / 港股 / 美股），点击 **▶ 运行回测**
+4. 等待完成后，点击任意市场结果卡片
+5. 页面下方出现该市场的 **Plotly 交互式 K 线图**，包含：
+   - OHLC 蜡烛图（悬停显示 open/high/low/close/volume）
+   - 策略指标线（MA、信号线等）
+   - 买卖点三角标记（▲买入 / ▼卖出，悬停显示时间与信号原因）
+   - 成交量柱状图（子图）
+   - 组合价值曲线（子图）
+6. 点击其他市场卡片可切换 K 线图
+
+> **注意**：K 线图数据缓存在服务器内存中，重启服务后需重新运行回测才可查看。
+
+### 技术栈
+
+| 层 | 技术 |
+|----|------|
+| 后端框架 | FastAPI + uvicorn（端口 8888）|
+| K 线生成 | backtrader-plotly（backtrader 原生绘图流水线）|
+| 前端图表 | Plotly.js（K线）+ Chart.js（权益/雷达/散点）|
+| 前端交互 | Alpine.js + Tailwind CSS + Flowbite |
+
+---
 
 ## 当前进展
 - [x] 基础框架搭建
@@ -74,12 +134,15 @@ python main.py --mode full          # 完整流程（默认）
 - [x] RSI策略实现
 - [x] BOLL策略实现
 - [x] MA_CROSS策略实现
+- [x] TRIPLE_MA / DUAL_THRUST / KAMA / TURTLE 策略实现
 - [x] 回测引擎开发
 - [x] 参数优化功能实现
+- [x] 走势前向验证（Walk-Forward Optimization）
 - [x] 实盘数据验证
 - [x] 性能分析工具
 - [x] 完整回测流程
-- [ ] 可视化界面开发
+- [x] WebUI 可视化平台（FastAPI + Alpine.js）
+- [x] 交互式 K 线图（backtrader-plotly + Plotly.js）
 - [ ] 风险管理模块
 - [ ] 实盘交易接口
 
