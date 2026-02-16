@@ -174,6 +174,20 @@ async def run_backtest_api(req: BacktestRequest):
         },
     }
 
+    # 清洗 float('inf')/NaN：FastAPI/Starlette JSONResponse 使用 allow_nan=False，
+    # 含 NaN/Inf 的 dict 直接返回会触发 ValueError → 500。
+    # chart_json 也必须经过此函数再存入缓存。
+    def _sanitize(obj):
+        if isinstance(obj, float):
+            if obj == float('inf') or obj == float('-inf') or obj != obj:
+                return None
+            return obj
+        if isinstance(obj, dict):
+            return {k: _sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitize(i) for i in obj]
+        return obj
+
     results = []
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -194,12 +208,17 @@ async def run_backtest_api(req: BacktestRequest):
             result = rmb.run_backtest(df, sym, req.strategy, merged_params)
             result["market"] = market_name
             result["market_key"] = market_key
-            # 缓存 chart_json，不放入响应体（保持轻量）
+            # 缓存 chart_json（不放入响应体，保持响应轻量）
+            # backtrader-plotly 在指标预热期会产生 NaN，必须先清洗
             chart_json = result.pop("chart_json", None)
             if chart_json is not None:
                 if run_id not in _chart_cache:
+                    # 保留最近 20 次运行，超出时删除最旧的条目（防止内存泄漏）
+                    if len(_chart_cache) >= 20:
+                        oldest = next(iter(_chart_cache))
+                        del _chart_cache[oldest]
                     _chart_cache[run_id] = {}
-                _chart_cache[run_id][market_key] = chart_json
+                _chart_cache[run_id][market_key] = _sanitize(chart_json)
             results.append(result)
         except Exception as e:
             results.append({
@@ -216,18 +235,6 @@ async def run_backtest_api(req: BacktestRequest):
                 "equity_curve": [],
                 "trade_log": [],
             })
-
-    # 序列化（处理 float('inf') 等不可序列化的值）
-    def _sanitize(obj):
-        if isinstance(obj, float):
-            if obj == float('inf') or obj == float('-inf') or obj != obj:
-                return None
-            return obj
-        if isinstance(obj, dict):
-            return {k: _sanitize(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [_sanitize(i) for i in obj]
-        return obj
 
     return _sanitize({"results": results, "run_id": run_id})
 

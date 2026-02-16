@@ -283,7 +283,8 @@
           </div>
         </div>
         <div x-show="chartError" class="text-sm text-rose-400 py-4" x-text="chartError"></div>
-        <div id="klineDiv" style="height:600px; width:100%;" x-show="!chartLoading && !chartError"></div>
+        <!-- klineDiv 始终在 DOM 中渲染（不用 x-show），避免 display:none 时 Plotly 宽高为 0 -->
+        <div id="klineDiv" style="height:600px; width:100%;"></div>
       </div>
     </div>
   </template>
@@ -559,24 +560,32 @@ function app() {
       this.selectedChartMarket = marketKey;
       this.chartLoading = true;
       this.chartError = '';
+
+      // Phase 1: 获取数据
+      let figData = null;
       try {
         const resp = await fetch(`/api/chart/${this.btRunId}/${marketKey}`);
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({ detail: 'K线图不可用' }));
           throw new Error(err.detail || `HTTP ${resp.status}`);
         }
-        const figData = await resp.json();
-        await this.$nextTick();
-        Plotly.react('klineDiv', figData.data, figData.layout, {
-          responsive: true,
-          displayModeBar: true,
-          modeBarButtonsToRemove: ['select2d', 'lasso2d'],
-        });
+        figData = await resp.json();
       } catch (e) {
         this.chartError = 'K线图加载失败: ' + e.message;
-      } finally {
         this.chartLoading = false;
+        return;
       }
+
+      // Phase 2: 先关闭 loading（使 klineDiv 完全可见），再渲染
+      // Plotly 必须在可见 DOM 上渲染，否则宽高为 0 导致空白图
+      this.chartLoading = false;
+      await this.$nextTick();
+      Plotly.react('klineDiv', figData.data, figData.layout, {
+        responsive: true,
+        displayModeBar: true,
+        modeBarButtonsToRemove: ['select2d', 'lasso2d'],
+      });
+      Plotly.Plots.resize('klineDiv');
     },
 
     // ── 当前市场的交易记录 ──
