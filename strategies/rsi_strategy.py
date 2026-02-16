@@ -59,16 +59,10 @@ class RSIStrategy(BaseStrategy):
         else:
             self.rsi_to_use = self.rsi
         
-        # 超买超卖线
-        self.overbought_line = bt.indicators.Constant(params['overbought'], plot=False)
-        self.oversold_line = bt.indicators.Constant(params['oversold'], plot=False)
-        self.middle_line = bt.indicators.Constant(50, plot=False)
-        
-        # 交叉信号
-        self.overbought_cross = bt.indicators.CrossOver(self.rsi_to_use, self.overbought_line)
-        self.oversold_cross = bt.indicators.CrossOver(self.rsi_to_use, self.oversold_line)
-        self.middle_cross_up = bt.indicators.CrossOver(self.rsi_to_use, self.middle_line)
-        self.middle_cross_down = bt.indicators.CrossOver(self.middle_line, self.rsi_to_use)
+        # 超买超卖线 - 使用数值而不是指标
+        self.overbought_level = params['overbought']
+        self.oversold_level = params['oversold']
+        self.middle_level = 50
         
         # 趋势过滤
         self.trend_sma = bt.indicators.SimpleMovingAverage(

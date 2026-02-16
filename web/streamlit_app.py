@@ -1,0 +1,371 @@
+"""
+ClawQuant Streamlit WebUI - 基于 Streamlit + Pyecharts 的可视化界面
+运行: streamlit run web/streamlit_app.py
+"""
+
+import sys
+from pathlib import Path
+from datetime import datetime, date
+import pandas as pd
+import streamlit as st
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from web.charts_plotly import draw_kline_with_ma, draw_equity_curve, draw_comparison_bar
+from web.ui_components import (
+    strategy_selector_ui,
+    market_selector_ui,
+    backtest_params_ui,
+    display_results_table
+)
+
+st.set_page_config(
+    page_title="ClawQuant 量化回测平台",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+
+def main():
+    st.title("📈 ClawQuant 量化回测平台")
+    st.markdown("---")
+    
+    # 侧边栏配置
+    with st.sidebar:
+        st.header("⚙️ 回测配置")
+        
+        # 策略选择
+        strategy_name, strategy_params = strategy_selector_ui()
+        
+        # 市场选择
+        selected_markets = market_selector_ui()
+        
+        # 回测参数
+        backtest_config = backtest_params_ui()
+        
+        # 运行回测按钮
+        run_button = st.button("🚀 运行回测", type="primary", use_container_width=True)
+    
+    # 主界面
+    if run_button:
+        if not selected_markets:
+            st.error("❌ 请至少选择一个市场")
+            return
+        
+        with st.spinner("正在运行回测..."):
+            results = run_backtest(
+                strategy_name=strategy_name,
+                strategy_params=strategy_params,
+                markets=selected_markets,
+                config=backtest_config
+            )
+        
+        if results:
+            display_backtest_results(results)
+    else:
+        # 显示历史结果
+        display_historical_results()
+
+
+def run_backtest(strategy_name, strategy_params, markets, config):
+    """运行回测"""
+    import run_multimarket_backtest as rmb
+    
+    market_loaders = {
+        "a_share": (rmb.load_a_share, "000001.SH", "A股 上证指数"),
+        "hk_share": (rmb.load_hk_share, "0700.HK", "港股 腾讯"),
+        "us_nvda": (rmb.load_us_share, "NVDA", "美股 NVDA"),
+    }
+    
+    results = []
+    
+    for market_key in markets:
+        if market_key not in market_loaders:
+            continue
+        
+        loader_fn, symbol, market_name = market_loaders[market_key]
+        
+        try:
+            # 加载数据
+            df, sym, start, end = loader_fn()
+            
+            # 运行回测
+            result = rmb.run_backtest(df, sym, strategy_name, strategy_params)
+            
+            # 保存原始数据用于K线图显示（重置索引以便可视化）
+            df_for_chart = df.copy().reset_index()
+            result["df"] = df_for_chart
+            result["market"] = market_name
+            result["market_key"] = market_key
+            
+            results.append(result)
+        except Exception as e:
+            st.error(f"❌ {market_name} 回测失败: {str(e)}")
+            continue
+    
+    return results
+
+
+def display_backtest_results(results):
+    """显示回测结果"""
+    st.header("📊 回测结果")
+    
+    # 创建标签页
+    tabs = st.tabs([r["market"] for r in results] + ["📈 综合对比"])
+    
+    # 每个市场的详细结果
+    for idx, result in enumerate(results):
+        with tabs[idx]:
+            display_single_market_result(result)
+    
+    # 综合对比
+    with tabs[-1]:
+        display_comparison_results(results)
+
+
+def display_single_market_result(result):
+    """显示单个市场的回测结果"""
+    market_name = result["market"]
+    
+    # 关键指标卡片
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            "总收益率",
+            f"{result.get('total_return', 0):.2f}%",
+            delta=None
+        )
+    
+    with col2:
+        st.metric(
+            "年化收益率",
+            f"{result.get('annual_return', 0):.2f}%",
+            delta=None
+        )
+    
+    with col3:
+        sharpe = result.get('sharpe_ratio')
+        if sharpe is None or sharpe == float('inf') or sharpe == float('-inf') or sharpe != sharpe:
+            sharpe_str = "N/A"
+        else:
+            sharpe_str = f"{sharpe:.2f}"
+        st.metric("夏普比率", sharpe_str)
+    
+    with col4:
+        st.metric(
+            "最大回撤",
+            f"{result.get('max_drawdown', 0):.2f}%",
+            delta=None,
+            delta_color="inverse"
+        )
+    
+    # 详细指标
+    col5, col6, col7, col8 = st.columns(4)
+    
+    with col5:
+        st.metric("胜率", f"{result.get('win_rate', 0):.2f}%")
+    
+    with col6:
+        st.metric("交易次数", f"{result.get('trades', 0)}")
+    
+    with col7:
+        st.metric("期末资产", f"¥{result.get('final_value', 0):,.0f}")
+    
+    with col8:
+        profit_factor = result.get('profit_factor', 0)
+        pf_str = f"{profit_factor:.2f}" if profit_factor != float('inf') else "N/A"
+        st.metric("盈亏比", pf_str)
+    
+    st.markdown("---")
+    
+    # K线图
+    st.subheader("📈 K线图与均线")
+    
+    if "df" not in result:
+        st.warning(f"⚠️ {market_name} 缺少数据字段 'df'")
+    elif result["df"] is None:
+        st.warning(f"⚠️ {market_name} 数据为空 (None)")
+    elif result["df"].empty:
+        st.warning(f"⚠️ {market_name} 数据为空 (empty DataFrame)")
+    else:
+        df = result["df"].copy()
+        
+        # 准备数据格式 - 统一转换为中文列名
+        try:
+            # 重置索引，确保日期列存在
+            if df.index.name == 'date' or 'date' in str(df.index.name).lower():
+                df = df.reset_index()
+            
+            # 标准化列名映射
+            column_mapping = {
+                'date': '日期', 'Date': '日期', 'DATE': '日期',
+                'open': '开盘', 'Open': '开盘', 'OPEN': '开盘',
+                'high': '最高', 'High': '最高', 'HIGH': '最高',
+                'low': '最低', 'Low': '最低', 'LOW': '最低',
+                'close': '收盘', 'Close': '收盘', 'CLOSE': '收盘',
+                'volume': '成交量', 'Volume': '成交量', 'VOLUME': '成交量'
+            }
+            
+            # 应用列名映射
+            df_chart = df.rename(columns=column_mapping)
+            
+            # 确保必需的列存在
+            required_cols = ['日期', '开盘', '最高', '最低', '收盘', '成交量']
+            if not all(col in df_chart.columns for col in required_cols):
+                st.error(f"数据列不完整。当前列: {list(df_chart.columns)}")
+            else:
+                # 只保留需要的列
+                df_chart = df_chart[required_cols]
+                
+                # 限制数据量 - 只显示最近1000个交易日，避免渲染问题
+                if len(df_chart) > 1000:
+                    df_chart = df_chart.tail(1000)
+                
+                # 确保日期格式正确
+                df_chart['日期'] = pd.to_datetime(df_chart['日期']).dt.strftime('%Y-%m-%d')
+                
+                # 确保数值列为浮点型
+                for col in ['开盘', '最高', '最低', '收盘', '成交量']:
+                    df_chart[col] = pd.to_numeric(df_chart[col], errors='coerce')
+                
+                # 删除包含 NaN 的行
+                df_chart = df_chart.dropna()
+                
+                if len(df_chart) > 0:
+                    kline_chart = draw_kline_with_ma(df_chart)
+                    st.plotly_chart(kline_chart, use_container_width=True, key=f"kline_{market_name}")
+                else:
+                    st.warning("数据处理后为空，无法绘制K线图")
+        except Exception as e:
+            st.error(f"K线图绘制失败: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
+    
+    # 资金曲线
+    st.subheader("💰 资金曲线")
+    
+    if "equity_curve_detailed" in result and result["equity_curve_detailed"]:
+        equity_chart = draw_equity_curve(result["equity_curve_detailed"])
+        st.plotly_chart(equity_chart, use_container_width=True, key=f"equity_{market_name}")
+    elif "equity_curve" in result and result["equity_curve"]:
+        # 尝试从 df 获取日期
+        dates = None
+        if "df" in result and result["df"] is not None and not result["df"].empty and "date" in result["df"].columns:
+            dates = result["df"]["date"].tolist()[:len(result["equity_curve"])]
+        equity_chart = draw_equity_curve(result["equity_curve"], dates=dates)
+        st.plotly_chart(equity_chart, use_container_width=True, key=f"equity_fallback_{market_name}")
+    else:
+        st.warning(f"⚠️ {market_name} 缺少资金曲线数据")
+    
+    # 交易记录
+    st.subheader("📝 交易记录")
+    
+    if "trade_log" in result and result["trade_log"]:
+        trade_df = pd.DataFrame(result["trade_log"])
+        st.dataframe(trade_df, use_container_width=True, height=300)
+    else:
+        st.warning(f"⚠️ {market_name} 缺少交易记录数据")
+
+
+def display_comparison_results(results):
+    """显示综合对比结果"""
+    st.subheader("📊 多市场对比分析")
+    
+    # 构建对比表格
+    comparison_data = []
+    for r in results:
+        sharpe = r.get('sharpe_ratio')
+        if sharpe is None or sharpe == float('inf') or sharpe == float('-inf') or sharpe != sharpe:
+            sharpe_str = "N/A"
+        else:
+            sharpe_str = f"{sharpe:.2f}"
+        
+        comparison_data.append({
+            "市场": r["market"],
+            "总收益": f"{r.get('total_return', 0):.2f}%",
+            "年化收益": f"{r.get('annual_return', 0):.2f}%",
+            "夏普比率": sharpe_str,
+            "最大回撤": f"{r.get('max_drawdown', 0):.2f}%",
+            "胜率": f"{r.get('win_rate', 0):.2f}%",
+            "交易次数": r.get('trades', 0),
+            "期末资产": f"¥{r.get('final_value', 0):,.0f}"
+        })
+    
+    df_comparison = pd.DataFrame(comparison_data)
+    
+    # 显示表格
+    st.dataframe(
+        df_comparison,
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    # 绘制对比柱状图
+    st.subheader("📊 收益率对比")
+    
+    # 准备数据
+    chart_data = []
+    for r in results:
+        chart_data.append({
+            "market": r["market"],
+            "total_return": r.get("total_return", 0),
+            "annual_return": r.get("annual_return", 0)
+        })
+    
+    df_chart = pd.DataFrame(chart_data)
+    
+    if len(df_chart) > 0:
+        try:
+            bar_chart = draw_comparison_bar(df_chart)
+            st.plotly_chart(bar_chart, use_container_width=True)
+        except Exception as e:
+            st.error(f"对比图表绘制失败: {str(e)}")
+
+
+def display_historical_results():
+    """显示历史回测结果"""
+    st.header("📚 历史回测记录")
+    
+    results_dir = ROOT / "results" / "backtest_results"
+    
+    if not results_dir.exists():
+        st.info("暂无历史回测记录，请运行回测生成结果")
+        return
+    
+    # 扫描历史结果
+    runs = []
+    for d in sorted(results_dir.iterdir(), reverse=True):
+        csv_path = d / "comparison.csv"
+        if csv_path.exists():
+            runs.append({
+                "run_id": d.name,
+                "path": str(csv_path),
+                "timestamp": d.name.split("_", 1)[-1] if "_" in d.name else d.name,
+            })
+    
+    if not runs:
+        st.info("暂无历史回测记录")
+        return
+    
+    # 选择历史记录
+    selected_run = st.selectbox(
+        "选择历史记录",
+        options=[r["run_id"] for r in runs],
+        format_func=lambda x: f"回测记录 - {x}"
+    )
+    
+    if selected_run:
+        selected_path = next(r["path"] for r in runs if r["run_id"] == selected_run)
+        
+        try:
+            df = pd.read_csv(selected_path, encoding="utf-8-sig")
+            st.dataframe(df, use_container_width=True)
+        except Exception as e:
+            st.error(f"读取历史记录失败: {str(e)}")
+
+
+if __name__ == "__main__":
+    main()
