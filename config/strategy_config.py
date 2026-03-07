@@ -136,6 +136,109 @@ class MACrossStrategyParams:
             "slow_period": [20, 25, 30, 35, 40, 45, 50, 60]
         }
 
+class MomentumStrategyParams:
+    """动量策略参数"""
+    
+    @staticmethod
+    def get_base_params() -> StrategyParams:
+        return StrategyParams(
+            name="MOMENTUM",
+            description="动量策略：基于价格动量的方向性交易策略",
+            params={
+                "momentum_period": 20,      # 动量周期
+                "sma_period": 50,           # 均线周期
+                "atr_period": 14,           # ATR周期
+                "atr_multiplier": 2.0,      # ATR乘数
+                "signal_threshold": 0.02,   # 信号阈值
+                "exit_threshold": 0.01,     # 退出阈值
+            }
+        )
+    
+    @staticmethod
+    def get_param_grid() -> Dict[str, List]:
+        return {
+            "momentum_period": [10, 15, 20, 25, 30],
+            "sma_period": [20, 30, 40, 50, 60],
+            "atr_multiplier": [1.5, 2.0, 2.5, 3.0],
+            "signal_threshold": [0.01, 0.02, 0.03, 0.04]
+        }
+
+class MeanReversionStrategyParams:
+    """均值回归策略参数"""
+    
+    @staticmethod
+    def get_base_params() -> StrategyParams:
+        return StrategyParams(
+            name="MEAN_REVERSION",
+            description="均值回归策略：基于RSI和布林带的反趋势策略",
+            params={
+                "rsi_period": 14,
+                "rsi_oversold": 30,
+                "rsi_overbought": 70,
+                "bb_period": 20,
+                "bb_devfactor": 2.0,
+                "sma_period": 50,
+            }
+        )
+    
+    @staticmethod
+    def get_param_grid() -> Dict[str, List]:
+        return {
+            "rsi_period": [9, 12, 14, 16, 20],
+            "rsi_oversold": [20, 25, 30, 35],
+            "rsi_overbought": [65, 70, 75, 80],
+            "bb_period": [15, 20, 25, 30],
+            "bb_devfactor": [1.5, 2.0, 2.5, 3.0]
+        }
+
+class BreakoutStrategyParams:
+    """突破策略参数"""
+    
+    @staticmethod
+    def get_base_params() -> StrategyParams:
+        return StrategyParams(
+            name="BREAKOUT",
+            description="突破策略：基于价格突破关键技术位的策略",
+            params={
+                "atr_period": 14,
+                "atr_multiplier": 2.0,
+                "lookback_period": 20,      # 回看周期
+                "confirmation_period": 3,   # 确认周期
+            }
+        )
+    
+    @staticmethod
+    def get_param_grid() -> Dict[str, List]:
+        return {
+            "atr_multiplier": [1.5, 2.0, 2.5, 3.0],
+            "lookback_period": [10, 15, 20, 25, 30],
+            "confirmation_period": [2, 3, 4, 5]
+        }
+
+class TrendFollowingStrategyParams:
+    """趋势跟踪策略参数"""
+    
+    @staticmethod
+    def get_base_params() -> StrategyParams:
+        return StrategyParams(
+            name="TREND_FOLLOWING",
+            description="趋势跟踪策略：基于移动平均线交叉的趋势策略",
+            params={
+                "fast_ema_period": 10,
+                "slow_ema_period": 21,
+                "atr_period": 14,
+                "atr_multiplier": 3.0,
+            }
+        )
+    
+    @staticmethod
+    def get_param_grid() -> Dict[str, List]:
+        return {
+            "fast_ema_period": [5, 8, 10, 12, 15],
+            "slow_ema_period": [13, 20, 21, 28, 30, 35],
+            "atr_multiplier": [2.0, 2.5, 3.0, 3.5]
+        }
+
 # ========== 策略工厂配置 ==========
 
 class StrategyFactoryConfig:
@@ -150,6 +253,10 @@ class StrategyFactoryConfig:
             "RSI": RSIStrategyParams.get_base_params(),
             "BOLL": BollingerStrategyParams.get_base_params(),
             "MA_CROSS": MACrossStrategyParams.get_base_params(),
+            "MOMENTUM": MomentumStrategyParams.get_base_params(),
+            "MEAN_REVERSION": MeanReversionStrategyParams.get_base_params(),
+            "BREAKOUT": BreakoutStrategyParams.get_base_params(),
+            "TREND_FOLLOWING": TrendFollowingStrategyParams.get_base_params(),
         }
     
     @staticmethod
@@ -161,6 +268,10 @@ class StrategyFactoryConfig:
             "RSI": RSIStrategyParams.get_param_grid(),
             "BOLL": BollingerStrategyParams.get_param_grid(),
             "MA_CROSS": MACrossStrategyParams.get_param_grid(),
+            "MOMENTUM": MomentumStrategyParams.get_param_grid(),
+            "MEAN_REVERSION": MeanReversionStrategyParams.get_param_grid(),
+            "BREAKOUT": BreakoutStrategyParams.get_param_grid(),
+            "TREND_FOLLOWING": TrendFollowingStrategyParams.get_param_grid(),
         }
     
     @staticmethod
@@ -172,6 +283,10 @@ class StrategyFactoryConfig:
             "RSI": "RSI策略：RSI低于超卖线时买入，高于超买线时卖出",
             "BOLL": "布林带策略：价格触及下轨时买入，触及上轨时卖出",
             "MA_CROSS": "双均线交叉策略：短期均线上穿长期均线时买入，下穿时卖出",
+            "MOMENTUM": "动量策略：基于价格动量的方向性交易策略",
+            "MEAN_REVERSION": "均值回归策略：基于RSI和布林带的反趋势策略",
+            "BREAKOUT": "突破策略：基于价格突破关键技术位的策略",
+            "TREND_FOLLOWING": "趋势跟踪策略：基于移动平均线交叉的趋势策略",
         }
 
 # ========== 导出配置 ==========

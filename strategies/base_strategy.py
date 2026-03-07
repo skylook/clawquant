@@ -335,13 +335,25 @@ class StrategyFactory:
         elif strategy_type == 'MA_CROSS':
             from strategies.ma_cross_strategy import MACrossStrategy
             return MACrossStrategy(params)
+        elif strategy_type == 'MOMENTUM':
+            from strategies.momentum_strategy import MomentumStrategy
+            return MomentumStrategy(params)
+        elif strategy_type == 'MEAN_REVERSION':
+            from strategies.momentum_strategy import MeanReversionStrategy
+            return MeanReversionStrategy(params)
+        elif strategy_type == 'BREAKOUT':
+            from strategies.momentum_strategy import BreakoutStrategy
+            return BreakoutStrategy(params)
+        elif strategy_type == 'TREND_FOLLOWING':
+            from strategies.momentum_strategy import TrendFollowingStrategy
+            return TrendFollowingStrategy(params)
         else:
             raise ValueError(f"未知的策略类型: {strategy_type}")
     
     @staticmethod
     def get_available_strategies() -> List[str]:
         """获取可用的策略类型"""
-        return ['MA', 'MACD', 'RSI', 'BOLL', 'MA_CROSS']
+        return ['MA', 'MACD', 'RSI', 'BOLL', 'MA_CROSS', 'MOMENTUM', 'MEAN_REVERSION', 'BREAKOUT', 'TREND_FOLLOWING']
     
     @staticmethod
     def get_default_params(strategy_type: str) -> Dict[str, Any]:

@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import akshare as ak
 import tushare as ts
+import yfinance as yf  # Added for international markets
 from datetime import datetime, timedelta
 import time
 from typing import Optional, Dict, List, Tuple
@@ -85,7 +86,7 @@ class DataFetcher:
         获取股票数据
         
         Args:
-            symbol: 股票代码，如 "000001.SZ"
+            symbol: 股票代码，如 "000001.SZ", "0005.HK", "AAPL"
             start_date: 开始日期，格式 "YYYY-MM-DD"
             end_date: 结束日期，格式 "YYYY-MM-DD"
             frequency: 数据频率，支持 "daily", "weekly", "monthly"
@@ -103,19 +104,72 @@ class DataFetcher:
         
         logger.info(f"开始获取数据: {symbol} ({start_date} 到 {end_date})")
         
+        # 识别市场类型
+        market_type = self._identify_market_type(symbol)
+        logger.info(f"识别市场类型: {market_type}")
+        
+        # 根据市场类型选择获取方法
+        data = pd.DataFrame()
+        
         try:
-            # 方法1: 使用akshare
-            data = self._fetch_with_akshare(symbol, start_date, end_date, frequency)
-        except Exception as e1:
-            logger.warning(f"akshare获取失败: {e1}")
-            try:
-                # 方法2: 使用tushare
-                data = self._fetch_with_tushare(symbol, start_date, end_date, frequency)
-            except Exception as e2:
-                logger.warning(f"tushare获取失败: {e2}")
-                # 方法3: 使用模拟数据
-                data = self._generate_mock_data(symbol, start_date, end_date, frequency)
-                logger.info(f"使用模拟数据: {symbol}")
+            if market_type == 'china_a':
+                # A股市场
+                try:
+                    # 方法1: 使用akshare
+                    data = self._fetch_with_akshare(symbol, start_date, end_date, frequency)
+                except Exception as e1:
+                    logger.warning(f"akshare获取失败: {e1}")
+                    try:
+                        # 方法2: 使用tushare
+                        data = self._fetch_with_tushare(symbol, start_date, end_date, frequency)
+                    except Exception as e2:
+                        logger.warning(f"tushare获取失败: {e2}")
+                        # 方法3: 使用模拟数据
+                        data = self._generate_mock_data(symbol, start_date, end_date, frequency)
+                        logger.info(f"使用模拟数据: {symbol}")
+            
+            elif market_type in ['hong_kong', 'us']:
+                # 国际市场，优先使用yfinance
+                try:
+                    # 标准化符号格式
+                    standardized_symbol = self._handle_international_symbol(symbol, market_type)
+                    logger.info(f"标准化符号: {symbol} -> {standardized_symbol}")
+                    
+                    data = self._fetch_with_yfinance(standardized_symbol, start_date, end_date, frequency)
+                    
+                    if data.empty:
+                        logger.warning(f"yfinance获取数据为空，使用模拟数据: {symbol}")
+                        data = self._generate_mock_data(symbol, start_date, end_date, frequency)
+                except Exception as e:
+                    logger.warning(f"yfinance获取失败: {e}, 使用模拟数据: {symbol}")
+                    data = self._generate_mock_data(symbol, start_date, end_date, frequency)
+            
+            else:
+                # 默认使用原有方法
+                try:
+                    # 方法1: 使用akshare
+                    data = self._fetch_with_akshare(symbol, start_date, end_date, frequency)
+                except Exception as e1:
+                    logger.warning(f"akshare获取失败: {e1}")
+                    try:
+                        # 方法2: 使用tushare
+                        data = self._fetch_with_tushare(symbol, start_date, end_date, frequency)
+                    except Exception as e2:
+                        logger.warning(f"tushare获取失败: {e2}")
+                        # 方法3: 使用yfinance
+                        try:
+                            standardized_symbol = self._handle_international_symbol(symbol, market_type)
+                            data = self._fetch_with_yfinance(standardized_symbol, start_date, end_date, frequency)
+                        except Exception as e3:
+                            logger.warning(f"yfinance获取失败: {e3}")
+                            # 方法4: 使用模拟数据
+                            data = self._generate_mock_data(symbol, start_date, end_date, frequency)
+                            logger.info(f"使用模拟数据: {symbol}")
+        
+        except Exception as e:
+            logger.error(f"获取数据失败: {e}")
+            # 最终回退到模拟数据
+            data = self._generate_mock_data(symbol, start_date, end_date, frequency)
         
         # 确保数据格式正确
         data = self._standardize_data(data, symbol)
@@ -236,6 +290,82 @@ class DataFetcher:
             df = df.sort_index()
         
         return df
+    
+    def _fetch_with_yfinance(self, symbol: str, start_date: str, end_date: str,
+                           frequency: str) -> pd.DataFrame:
+        """使用yfinance获取国际市场的数据"""
+        # 映射频率
+        freq_map = {
+            "daily": "1d",
+            "weekly": "1wk",
+            "monthly": "1mo"
+        }
+        
+        yf_freq = freq_map.get(frequency, "1d")
+        
+        # 使用yfinance获取数据
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(
+            start=start_date,
+            end=end_date,
+            interval=yf_freq,
+            auto_adjust=True
+        )
+        
+        if not df.empty:
+            # 重命名列以匹配内部格式
+            df = df.rename(columns={
+                'Open': 'open',
+                'High': 'high',
+                'Low': 'low',
+                'Close': 'close',
+                'Volume': 'volume',
+                'Dividends': 'dividends',
+                'Stock Splits': 'stock_splits'
+            })
+            
+            # 如果没有amount列，创建一个估算值
+            if 'amount' not in df.columns:
+                df['amount'] = df['close'] * df['volume']
+        
+        return df
+    
+    def _identify_market_type(self, symbol: str) -> str:
+        """识别市场类型"""
+        symbol_upper = symbol.upper()
+        
+        # A股市场
+        if symbol_upper.endswith(('.SH', '.SZ')):
+            return 'china_a'
+        
+        # 港股市场
+        elif symbol_upper.endswith('.HK') or (len(symbol) == 4 and symbol.isdigit()):
+            return 'hong_kong'
+        
+        # 美股市场
+        elif '.' not in symbol_upper or symbol_upper.endswith(('.TO', '.MX', '.L', '.AX', '.T', '.K', '.O')):
+            return 'us'
+        
+        # 默认为A股
+        else:
+            return 'china_a'
+    
+    def _handle_international_symbol(self, symbol: str, market_type: str) -> str:
+        """处理国际市场的符号格式"""
+        if market_type == 'hong_kong':
+            # 处理港股代码
+            if '.' not in symbol:
+                # 如果没有后缀，添加.HK
+                return f"{symbol}.HK"
+            elif not symbol.upper().endswith('.HK'):
+                # 如果不是.HK后缀，转换为.HK
+                return f"{symbol.split('.')[0]}.HK"
+        
+        elif market_type == 'us':
+            # 美股不需要特殊处理
+            return symbol
+        
+        return symbol
     
     def _generate_mock_data(self, symbol: str, start_date: str, end_date: str,
                            frequency: str) -> pd.DataFrame:

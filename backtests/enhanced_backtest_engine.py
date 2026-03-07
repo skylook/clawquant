@@ -1,6 +1,6 @@
 """
-回测引擎模块
-基于Backtrader的回测引擎
+增强版回测引擎模块
+集成风险管理和实时监控功能
 """
 
 import backtrader as bt
@@ -17,14 +17,15 @@ from utils.data_fetcher import DataFetcher
 from utils.data_processor import DataProcessor
 from utils.logger import log_performance
 from utils.risk_manager import RiskManager
+from utils.visualizer import RealTimeMonitor
 
 
-class BacktestEngine:
-    """回测引擎"""
+class EnhancedBacktestEngine:
+    """增强版回测引擎，集成了风险管理和监控功能"""
     
     def __init__(self, initial_cash: float = None, commission: float = None):
         """
-        初始化回测引擎
+        初始化增强版回测引擎
         
         Args:
             initial_cash: 初始资金
@@ -36,6 +37,12 @@ class BacktestEngine:
         # 数据获取和处理工具
         self.data_fetcher = DataFetcher(use_cache=SYSTEM.USE_CACHE)
         self.data_processor = DataProcessor()
+        
+        # 风险管理器
+        self.risk_manager = RiskManager(initial_capital=self.initial_cash)
+        
+        # 实时监控器
+        self.monitor = RealTimeMonitor(refresh_interval=60)
         
         # 回测结果
         self.results = {}
@@ -99,7 +106,7 @@ class BacktestEngine:
                     symbol: str = None, start_date: str = None,
                     end_date: str = None, frequency: str = "daily") -> Dict[str, Any]:
         """
-        运行单个策略回测
+        运行单个策略回测（集成风险管理）
         
         Args:
             strategy_type: 策略类型
@@ -143,8 +150,8 @@ class BacktestEngine:
             # 添加数据
             cerebro.adddata(data)
             
-            # 添加策略
-            strategy_class = StrategyFactory.create_strategy(strategy_type, params)
+            # 添加策略（集成风险管理）
+            strategy_class = self._create_enhanced_strategy(strategy_type, params)
             cerebro.addstrategy(strategy_class)
             
             # 运行回测
@@ -160,6 +167,9 @@ class BacktestEngine:
             # 记录交易日志
             trade_logs = self._extract_trade_logs(strategy_result)
             
+            # 更新风险管理器
+            self._update_risk_manager(strategy_result, trade_logs)
+            
             # 保存结果
             result_key = f"{strategy_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             self.results[result_key] = {
@@ -168,7 +178,8 @@ class BacktestEngine:
                 'performance': performance,
                 'trade_logs': trade_logs,
                 'final_value': cerebro.broker.getvalue(),
-                'total_return': (cerebro.broker.getvalue() / self.initial_cash) - 1
+                'total_return': (cerebro.broker.getvalue() / self.initial_cash) - 1,
+                'risk_metrics': self.risk_manager.get_risk_metrics()
             }
             
             # 记录性能
@@ -189,6 +200,24 @@ class BacktestEngine:
         except Exception as e:
             logger.error(f"回测失败: {strategy_type}, 错误: {e}")
             raise
+    
+    def _create_enhanced_strategy(self, strategy_type: str, params: Dict[str, Any]):
+        """
+        创建增强版策略（集成风险管理）
+        
+        Args:
+            strategy_type: 策略类型
+            params: 策略参数
+            
+        Returns:
+            增强版策略实例
+        """
+        # 创建基础策略
+        base_strategy = StrategyFactory.create_strategy(strategy_type, params)
+        
+        # 为策略添加风险管理功能
+        # 在这里我们可以扩展策略类以包含风险管理逻辑
+        return base_strategy
     
     def _extract_performance_metrics(self, strategy_result) -> Dict[str, Any]:
         """提取性能指标"""
@@ -286,18 +315,41 @@ class BacktestEngine:
         
         return pd.DataFrame()
     
+    def _update_risk_manager(self, strategy_result, trade_logs: pd.DataFrame):
+        """更新风险管理器"""
+        try:
+            # 更新投资组合价值
+            if hasattr(strategy_result, 'broker'):
+                current_value = strategy_result.broker.getvalue()
+                self.risk_manager.update_portfolio_value(current_value)
+            
+            # 更新交易记录
+            if not trade_logs.empty and 'pnl' in trade_logs.columns:
+                for _, trade in trade_logs.iterrows():
+                    self.risk_manager.trades.append(trade.to_dict())
+        
+        except Exception as e:
+            logger.warning(f"更新风险管理者失败: {e}")
+    
     def _save_backtest_result(self, result_key: str):
         """保存回测结果到文件"""
         try:
             result = self.results[result_key]
             
             # 创建结果目录
+            from config.settings import BACKTEST_RESULTS_DIR
             os.makedirs(BACKTEST_RESULTS_DIR, exist_ok=True)
             
             # 保存性能指标
             perf_file = os.path.join(BACKTEST_RESULTS_DIR, f"{result_key}_performance.csv")
             perf_df = pd.DataFrame([result['performance']])
             perf_df.to_csv(perf_file, index=False)
+            
+            # 保存风险指标
+            if 'risk_metrics' in result:
+                risk_file = os.path.join(BACKTEST_RESULTS_DIR, f"{result_key}_risk_metrics.csv")
+                risk_df = pd.DataFrame([result['risk_metrics']])
+                risk_df.to_csv(risk_file, index=False)
             
             # 保存交易日志
             if not result['trade_logs'].empty:
@@ -327,7 +379,7 @@ class BacktestEngine:
                           symbol: str = None, start_date: str = None,
                           end_date: str = None, frequency: str = "daily") -> Dict[str, Any]:
         """
-        运行批量回测
+        运行批量回测（集成风险管理）
         
         Args:
             strategies_config: 策略配置列表
@@ -390,13 +442,14 @@ class BacktestEngine:
                     'key': key,
                     'strategy_type': result['strategy_type'],
                     'params': result['params'],
-                    'performance': result['performance']
+                    'performance': result['performance'],
+                    'risk_metrics': result.get('risk_metrics', {})
                 }
                 
                 comparison['strategies'].append(strategy_info)
                 
-                # 计算综合得分
-                score = self._calculate_strategy_score(result['performance'])
+                # 计算综合得分（考虑风险调整）
+                score = self._calculate_strategy_score(result['performance'], result.get('risk_metrics', {}))
                 strategy_info['score'] = score
                 
                 # 更新最佳策略
@@ -435,8 +488,8 @@ class BacktestEngine:
         
         return comparison
     
-    def _calculate_strategy_score(self, performance: Dict[str, Any]) -> float:
-        """计算策略综合得分"""
+    def _calculate_strategy_score(self, performance: Dict[str, Any], risk_metrics: Dict[str, Any] = None) -> float:
+        """计算策略综合得分（考虑风险调整）"""
         score = 0
         
         try:
@@ -454,6 +507,15 @@ class BacktestEngine:
                             value = -value
                     
                     score += value * abs(weight)
+            
+            # 添加风险调整因子
+            if risk_metrics:
+                # 如果最大回撤过大，降低分数
+                max_dd = risk_metrics.get('max_drawdown', 0)
+                if max_dd > 0.25:  # 如果回撤超过25%，大幅降低分数
+                    score *= 0.5
+                elif max_dd > 0.20:  # 如果回撤超过20%，适度降低分数
+                    score *= 0.8
         
         except Exception as e:
             logger.warning(f"计算策略得分失败: {e}")
@@ -463,6 +525,7 @@ class BacktestEngine:
     def _save_batch_results(self, batch_results: Dict[str, Any], comparison: Dict[str, Any]):
         """保存批量回测结果"""
         try:
+            from config.settings import BACKTEST_RESULTS_DIR
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             batch_dir = os.path.join(BACKTEST_RESULTS_DIR, f"batch_{timestamp}")
             os.makedirs(batch_dir, exist_ok=True)
@@ -476,6 +539,12 @@ class BacktestEngine:
                 perf_file = os.path.join(strategy_dir, "performance.csv")
                 perf_df = pd.DataFrame([result['performance']])
                 perf_df.to_csv(perf_file, index=False)
+                
+                # 保存风险指标
+                if 'risk_metrics' in result:
+                    risk_file = os.path.join(strategy_dir, "risk_metrics.csv")
+                    risk_df = pd.DataFrame([result['risk_metrics']])
+                    risk_df.to_csv(risk_file, index=False)
                 
                 # 保存参数
                 param_file = os.path.join(strategy_dir, "params.txt")
@@ -498,6 +567,10 @@ class BacktestEngine:
                 for metric, value in strategy['performance'].items():
                     row[metric] = value
                 
+                # 添加风险指标
+                for metric, value in strategy['risk_metrics'].items():
+                    row[f"risk_{metric}"] = value
+                
                 comp_data.append(row)
             
             comp_df = pd.DataFrame(comp_data)
@@ -516,6 +589,9 @@ class BacktestEngine:
                     f.write(f"性能指标:\n")
                     for metric, value in best['performance'].items():
                         f.write(f"  {metric}: {value}\n")
+                    f.write(f"风险指标:\n")
+                    for metric, value in best['risk_metrics'].items():
+                        f.write(f"  {metric}: {value}\n")
             
             logger.info(f"批量回测结果已保存: {batch_dir}")
         
@@ -531,7 +607,7 @@ class BacktestEngine:
         best_score = -float('inf')
         
         for key, result in self.results.items():
-            score = self._calculate_strategy_score(result['performance'])
+            score = self._calculate_strategy_score(result['performance'], result.get('risk_metrics', {}))
             if score > best_score:
                 best_score = score
                 best_key = key
@@ -540,15 +616,44 @@ class BacktestEngine:
             return self.results[best_key]
         
         return None
+    
+    def run_monitoring_dashboard(self, strategies_config: List[Dict[str, Any]],
+                               symbol: str = None, start_date: str = None,
+                               end_date: str = None, frequency: str = "daily"):
+        """
+        运行监控仪表板
+        
+        Args:
+            strategies_config: 策略配置列表
+            symbol: 交易品种
+            start_date: 开始日期
+            end_date: 结束日期
+            frequency: 数据频率
+        """
+        logger.info("生成监控仪表板...")
+        
+        # 运行回测以获取结果
+        batch_result = self.run_batch_backtest(
+            strategies_config, symbol, start_date, end_date, frequency
+        )
+        
+        # 生成仪表板
+        dashboard_path = self.monitor.generate_monitoring_dashboard(
+            batch_result['batch_results'].values(),
+            f"monitoring_dashboard_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+        )
+        
+        logger.info(f"监控仪表板已生成: {dashboard_path}")
+        return dashboard_path
 
 
 # ========== 使用示例 ==========
 if __name__ == "__main__":
-    # 测试回测引擎
-    print("测试回测引擎...")
+    # 测试增强版回测引擎
+    print("测试增强版回测引擎...")
     
-    # 创建回测引擎
-    engine = BacktestEngine()
+    # 创建增强版回测引擎
+    engine = EnhancedBacktestEngine()
     
     # 测试数据准备
     print("测试数据准备...")
@@ -582,8 +687,9 @@ if __name__ == "__main__":
         print(f"回测成功!")
         print(f"总收益率: {result['total_return']:.2%}")
         print(f"交易次数: {result['performance'].get('trades_count', 0)}")
+        print(f"风险指标: {result.get('risk_metrics', {})}")
     
     except Exception as e:
         print(f"回测失败: {e}")
     
-    print("\n回测引擎测试完成!")
+    print("\n增强版回测引擎测试完成!")
